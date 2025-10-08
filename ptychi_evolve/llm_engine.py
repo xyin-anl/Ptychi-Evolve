@@ -421,9 +421,10 @@ class LLMEngine:
             parameters = algorithm["analysis"].get("parameters", {})
 
         # parameter_tuning.md
+        visible_metrics = self._filter_metrics_for_llm(algorithm.get("metrics", {}))
         tuning_prompt = prompt.format(
             code=algorithm["code"],
-            current_metrics=json.dumps(algorithm.get("metrics", {}), indent=2),
+            current_metrics=json.dumps(visible_metrics, indent=2),
             current_analysis=json.dumps(algorithm.get("analysis", {}), indent=2),
             parameters=json.dumps(parameters, indent=2),
         )
@@ -450,12 +451,14 @@ class LLMEngine:
                 # Crossover two algorithms
                 parent1, parent2 = population[i], population[i + 1]
                 # Use crossover-specific template
+                parent1_visible = self._filter_metrics_for_llm(parent1.get("metrics", {}))
+                parent2_visible = self._filter_metrics_for_llm(parent2.get("metrics", {}))
                 crossover_prompt = prompt.format(
                     parent1_code=parent1["code"],
-                    parent1_metrics=json.dumps(parent1["metrics"], indent=2),
+                    parent1_metrics=json.dumps(parent1_visible, indent=2),
                     parent1_analysis=json.dumps(parent1.get("analysis", {}), indent=2),
                     parent2_code=parent2["code"],
-                    parent2_metrics=json.dumps(parent2["metrics"], indent=2),
+                    parent2_metrics=json.dumps(parent2_visible, indent=2),
                     parent2_analysis=json.dumps(parent2.get("analysis", {}), indent=2),
                 )
                 response = self._call_llm(
@@ -493,9 +496,10 @@ class LLMEngine:
         evolved = []
         for parent in population:
             # Use mutation-specific template
+            parent_visible = self._filter_metrics_for_llm(parent.get("metrics", {}))
             mutation_prompt = prompt.format(
                 parent_code=parent["code"],
-                parent_metrics=json.dumps(parent["metrics"], indent=2),
+                parent_metrics=json.dumps(parent_visible, indent=2),
                 parent_analysis=json.dumps(parent.get("analysis", {}), indent=2),
             )
             response = self._call_llm(
@@ -544,9 +548,10 @@ class LLMEngine:
         self.log.llm(f"Analyzing results with reasoning model: {self.reasoning_model}")
 
         # analysis.md
+        visible_metrics = self._filter_metrics_for_llm(algorithm.get("metrics", {}))
         analysis_prompt = prompt.format(
             code=algorithm["code"],
-            metrics=json.dumps(algorithm.get("metrics", {}), indent=2),
+            metrics=json.dumps(visible_metrics, indent=2),
             error=algorithm.get("error", "None"),
             history_summary=json.dumps(history.get_context(), indent=2),
         )
@@ -591,6 +596,156 @@ class LLMEngine:
                     self.log.debug_info(f"- {sug}", 2)
 
         return analysis
+
+    def _filter_metrics_for_llm(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Shapes the metrics payload that goes to the analysis/evolution prompts.
+
+        - Always includes aggregated metrics (configured via analysis.metrics_payload.aggregated).
+          If omitted, uses <primary label> + one complement (e.g., ssim + rmse).
+        - For multislice, per-layer visibility is controlled by analysis.metrics_payload.per_layer.*:
+            mode: all | stats | comprehensive
+            metrics: subset of {ssim, rmse, mae, psnr}
+            stats: any of [min, max, mean, median, std, p10, p90, worst]
+            worst_k: number of worst layers to include (only if 'worst' is selected)
+            label_for_worst: 'auto' (=primary label) or one of {ssim, rmse, mae, psnr}
+        """
+        import numpy as _np
+
+        cfg = (self.config.get("analysis", {}) or {}).get("metrics_payload", {}) or {}
+        agg_keep = cfg.get("aggregated")  # e.g., ["ssim", "rmse"]
+
+        pl_cfg = (cfg.get("per_layer", {}) or {})
+        pl_enabled = bool(pl_cfg.get("enabled", True))
+        pl_mode = str(pl_cfg.get("mode", "stats")).lower()  # all | stats | comprehensive
+        pl_metrics = pl_cfg.get("metrics")
+        pl_stats = [s.lower() for s in (pl_cfg.get("stats") or ["min", "max", "mean", "std"])]
+        worst_k = int(pl_cfg.get("worst_k", 1))
+        label_for_worst = str(pl_cfg.get("label_for_worst", "auto")).lower()
+
+        is_gt = (self.config.get("evaluation", {}) or {}).get("mode", "ground_truth") == "ground_truth"
+        label = (self.config.get("analysis", {}) or {}).get(
+            "performance_levels_ground_truth_label", "ssim"
+        )
+        sense = (self.config.get("analysis", {}) or {}).get(
+            "performance_levels_ground_truth_label_sense", "higher_is_better"
+        )
+        higher_is_better = str(sense).lower() == "higher_is_better"
+
+        # ---------- Aggregated metrics ----------
+        payload = {}
+        if is_gt:
+            if agg_keep:
+                for k in agg_keep:
+                    if k in metrics:
+                        payload[k] = metrics[k]
+            else:
+                # default: primary label + one complement
+                if label in metrics:
+                    payload[label] = metrics[label]
+                for alt in ("rmse", "mae", "psnr"):
+                    if alt != label and alt in metrics:
+                        payload[alt] = metrics[alt]
+                        break
+        else:
+            # Human/VLM modes: keep compact info
+            if isinstance(metrics, dict) and "structured_evaluation" in metrics:
+                ev = metrics["structured_evaluation"]
+                if label in ev:
+                    payload[label] = ev[label]
+                if "feedback" in ev:
+                    payload["feedback"] = ev["feedback"]
+            if isinstance(metrics, dict) and "suggested_action" in metrics:
+                payload["suggested_action"] = metrics["suggested_action"]
+
+        # ---------- Per-layer (multislice only) ----------
+        per_layer_all = metrics.get("per_layer") if isinstance(metrics, dict) else None
+        if (not per_layer_all) or (not pl_enabled):
+            return payload
+
+        layer_count = int(metrics.get("layer_count", 0)) if "layer_count" in metrics else None
+        if layer_count is not None and layer_count <= 1:
+            return payload
+
+        # Which per-layer metrics to consider
+        all_pl_keys = set(per_layer_all.keys()) if isinstance(per_layer_all, dict) else set()
+        default_pl = [label] if label in all_pl_keys else list(all_pl_keys)
+        selected_keys = [m for m in (pl_metrics or default_pl) if m in all_pl_keys]
+
+        def stats_for_array(arr: _np.ndarray, which: list):
+            d = {}
+            if "min" in which:
+                d["min"] = float(_np.min(arr))
+            if "max" in which:
+                d["max"] = float(_np.max(arr))
+            if "mean" in which:
+                d["mean"] = float(_np.mean(arr))
+            if "median" in which:
+                d["median"] = float(_np.median(arr))
+            if "std" in which:
+                d["std"] = float(_np.std(arr, ddof=0))
+            if "p10" in which:
+                d["p10"] = float(_np.percentile(arr, 10))
+            if "p90" in which:
+                d["p90"] = float(_np.percentile(arr, 90))
+            return d
+
+        # Determine metric for 'worst' report (only if requested)
+        include_worst = "worst" in pl_stats
+        worst_metric = label if label_for_worst in ("", "auto") else label_for_worst
+        if include_worst and worst_metric not in selected_keys and worst_metric in all_pl_keys:
+            selected_keys.append(worst_metric)
+
+        per_layer_payload = {}
+        per_layer_stats = {}
+
+        for k in selected_keys:
+            vals = per_layer_all.get(k, [])
+            if not isinstance(vals, list) or not vals:
+                continue
+            a = _np.asarray(vals, dtype=_np.float32)
+
+            if pl_mode in ("all", "comprehensive"):
+                per_layer_payload.setdefault("per_layer", {})[k] = vals
+
+            if pl_mode in ("stats", "comprehensive"):
+                per_layer_stats.setdefault("per_layer_stats", {})[k] = stats_for_array(a, pl_stats)
+
+        # 'worst' as part of stats (optional)
+        if include_worst and pl_mode in ("stats", "comprehensive") and worst_metric in per_layer_all:
+            vals = per_layer_all[worst_metric]
+            if isinstance(vals, list) and vals:
+                idx_vals = list(enumerate(vals))
+                # Determine the optimization sense for the chosen worst metric (per-metric)
+                # For ssim/psnr: higher is better; for rmse/mae: lower is better
+                if worst_metric in ("ssim", "psnr"):
+                    hm = True
+                elif worst_metric in ("rmse", "mae"):
+                    hm = False
+                else:
+                    hm = higher_is_better  # fallback to global label sense
+
+                idx_vals.sort(key=lambda iv: iv[1], reverse=not hm)  # worst first
+                k = max(1, worst_k)
+                worst_list = [{"layer": i, worst_metric: v} for i, v in idx_vals[:k]]
+
+                # best (optional context)
+                best_i, best_v = (max(idx_vals, key=lambda iv: iv[1]) if hm else min(idx_vals, key=lambda iv: iv[1]))
+
+                per_layer_stats.setdefault("per_layer_summary", {})
+                per_layer_stats["per_layer_summary"].update(
+                    {
+                        "label": worst_metric,
+                        "worst_k": worst_list,
+                        "best": {"layer": best_i, worst_metric: best_v},
+                        "layer_count": metrics.get("layer_count"),
+                        "aggregation": metrics.get("aggregation"),
+                    }
+                )
+
+        payload.update(per_layer_payload)
+        payload.update(per_layer_stats)
+        return payload
 
     def analyze_code_security(self, code: str, context: str = "") -> Dict[str, Any]:
         """Analyze code for security risks before execution.

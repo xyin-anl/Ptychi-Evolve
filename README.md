@@ -86,6 +86,9 @@ evaluation:
   iterations: 1000
   ground_truth:
     object_path: /abs/path/to/ground_truth.tiff
+    # For multislice GT stacks, control aggregation of per-layer metrics
+    # Options: mean | median | min | max | pXX (e.g., p90)
+    layer_aggregation: mean
 
 llm:
   model: o4-mini
@@ -103,6 +106,16 @@ analysis:
     excellent: 0.90
     good: 0.80
     moderate: 0.60
+  # Optional: shape what the LLM sees (aggregated + per-layer)
+  metrics_payload:
+    aggregated: [ssim, rmse]
+    per_layer:
+      enabled: true
+      metrics: [ssim, rmse]
+      mode: stats            # all | stats | comprehensive
+      stats: [min, max, mean, std, worst]
+      worst_k: 1
+      label_for_worst: auto  # or one of {ssim, rmse, mae, psnr}
 ```
 
 Additional knobs (optional):
@@ -218,7 +231,8 @@ End‑to‑end loop:
 
 Evaluation Modes:
 - Ground truth
-  - Metrics: RMSE/MAE/SSIM/PSNR on normalized phase images; warns and resizes GT if shapes mismatch
+  - Single-slice: RMSE/MAE/SSIM/PSNR on normalized phase images; warns and resizes GT if shapes mismatch
+  - Multislice: if a reconstructed layer stack is detected (`object_ph_layers/object_ph_layers_Niter*.tif[f]`) and a GT TIFF stack is provided, Ptychi‑Evolve computes per‑layer metrics (rmse/mae/ssim/psnr) and aggregates them (default `mean`) into top‑level values used for ranking/thresholds. Optional per‑layer arrays and stats (including `worst_k`) can be exposed to the LLM via `analysis.metrics_payload`.
 - Human
   - Interactive scoring (0–1 scale) and qualitative feedback; can abort evaluation
 - VLM (few‑shot)

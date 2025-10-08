@@ -607,6 +607,110 @@ class ReconEvaluator:
         max_val = 1.0
         return float(20 * np.log10(max_val / np.sqrt(mse)))
 
+    def _aggregate_layer_values(self, values, agg: str) -> float:
+        import numpy as _np
+        agg = (agg or "mean").lower()
+        arr = _np.asarray(values, dtype=_np.float32)
+        if agg == "mean":
+            return float(arr.mean())
+        if agg == "median":
+            return float(_np.median(arr))
+        if agg == "min":
+            return float(arr.min())
+        if agg == "max":
+            return float(arr.max())
+        if agg.startswith("p"):  # e.g., 'p90'
+            try:
+                q = float(agg[1:])
+                return float(_np.percentile(arr, q))
+            except Exception:
+                pass
+        return float(arr.mean())
+
+    def _calculate_metrics_ground_truth_layers(self, layers_path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        Compare reconstructed TIFF stack at `layers_path` with the ground-truth TIFF stack.
+        Returns aggregated top-level metrics + per-layer arrays + summary stats.
+        """
+        import tifffile
+        from scipy.ndimage import zoom
+        import numpy as _np
+
+        gt_cfg = self.eval_config.get("ground_truth", {})
+        gt_path = gt_cfg.get("object_path")
+        if not gt_path:
+            raise ValueError("Ground truth path is missing for layer-wise evaluation.")
+
+        rec_stack = tifffile.imread(str(layers_path)).astype(_np.float32) / 65535.0
+        if rec_stack.ndim != 3:
+            raise ValueError(f"Reconstructed layers TIFF must be 3D (L,H,W); got {rec_stack.shape}")
+
+        gt_stack = tifffile.imread(str(gt_path)).astype(_np.float32)
+        if gt_stack.ndim != 3:
+            raise ValueError(f"Ground-truth TIFF stack must be 3D; got {gt_stack.shape}")
+
+        # (H,W,L) -> (L,H,W) if needed
+        if gt_stack.shape[-1] == rec_stack.shape[0] and gt_stack.shape[0] != rec_stack.shape[0]:
+            gt_stack = _np.moveaxis(gt_stack, -1, 0)
+
+        rec_L, rec_H, rec_W = rec_stack.shape
+        gt_L, gt_H, gt_W = gt_stack.shape
+        if rec_L != gt_L:
+            raise ValueError(f"Layer count mismatch (recon {rec_L} vs GT {gt_L}). Ensure counts match.")
+
+        def _normalize01(a: _np.ndarray) -> _np.ndarray:
+            a = _np.asarray(a, dtype=_np.float32)
+            amin, amax = float(a.min()), float(a.max())
+            rng = amax - amin
+            return _np.zeros_like(a, _np.float32) if rng == 0 else (a - amin) / rng
+
+        per_layer = {"rmse": [], "mae": [], "ssim": [], "psnr": []}
+        warned = False
+        for l in range(rec_L):
+            rec = rec_stack[l]
+            gt = gt_stack[l]
+            if gt.shape != rec.shape:
+                if not warned:
+                    self.log.warning(
+                        "\n" + "=" * 80 + "\n"
+                        "WARNING: HxW mismatch in layer-wise evaluation. "
+                        "Resampling GT to recon size. Align data for best results.\n"
+                        + "=" * 80 + "\n"
+                    )
+                    warned = True
+                zoom_factors = (rec.shape[0] / gt.shape[0], rec.shape[1] / gt.shape[1])
+                gt = zoom(gt, zoom_factors, order=1)
+
+            gt_n, rec_n = _normalize01(gt), _normalize01(rec)
+            rmse = float(_np.sqrt(_np.mean((gt_n - rec_n) ** 2)))
+            mae = float(_np.mean(_np.abs(gt_n - rec_n)))
+            ssim = self._compute_ssim(gt_n, rec_n)
+            psnr = self._compute_psnr(gt_n, rec_n)
+            per_layer["rmse"].append(rmse)
+            per_layer["mae"].append(mae)
+            per_layer["ssim"].append(ssim)
+            per_layer["psnr"].append(psnr)
+
+        agg = gt_cfg.get("layer_aggregation", "mean")
+        metrics = {
+            "rmse": self._aggregate_layer_values(per_layer["rmse"], agg),
+            "mae": self._aggregate_layer_values(per_layer["mae"], agg),
+            "ssim": self._aggregate_layer_values(per_layer["ssim"], agg),
+            "psnr": self._aggregate_layer_values(per_layer["psnr"], agg),
+            "per_layer": per_layer,
+            "layer_count": rec_L,
+            "aggregation": agg,
+            "evaluation_source": "layers",
+        }
+        # summary stats for convenience
+        for k, vals in per_layer.items():
+            arr = _np.asarray(vals, dtype=_np.float32)
+            metrics[f"{k}_min"] = float(arr.min())
+            metrics[f"{k}_max"] = float(arr.max())
+            metrics[f"{k}_mean"] = float(arr.mean())
+            metrics[f"{k}_std"] = float(arr.std(ddof=0))
+        return metrics
+
     def _calculate_metrics_ground_truth(self, phase_path: str) -> Dict[str, Any]:
         """Calculate metrics from reconstruction task using saved files."""
         assert self.ground_truth_available, "Ground truth is not available"
@@ -944,34 +1048,38 @@ class ReconEvaluator:
                     self.log.info(f"Final loss: {final_loss}")
 
             # Find reconstructed phase from saved TIFF files
-            # Check if this is a multislice reconstruction
+            # Prefer per-layer stack for multislice recon if available
+            phase_layers_dir = Path(recon_path) / "object_ph_layers"
             phase_total_dir = Path(recon_path) / "object_ph_total"
             phase_single_dir = Path(recon_path) / "object_ph"
 
-            if phase_total_dir.exists():
-                # Multislice reconstruction - use total phase
-                phase_dir = phase_total_dir
-                phase_files = list(
-                    phase_dir.glob("object_ph_total_Niter*.tiff")
-                ) + list(phase_dir.glob("object_ph_total_Niter*.tif"))
-            else:
-                # Single slice reconstruction
-                phase_dir = phase_single_dir
-                phase_files = list(phase_dir.glob("object_ph_Niter*.tiff")) + list(
-                    phase_dir.glob("object_ph_Niter*.tif")
-                )
-
-            if not phase_files:
-                raise ValueError(f"No phase files found in {phase_dir}")
-
-            # Sort by iteration number and get the latest
             def _iter_from_name(p: Path) -> int:
                 try:
                     return int(p.stem.split("Niter")[-1])
                 except Exception:
                     return -1
 
-            phase_path = max(phase_files, key=_iter_from_name)
+            layers_files = []
+            if phase_layers_dir.exists():
+                layers_files = list(
+                    phase_layers_dir.glob("object_ph_layers_Niter*.tiff")
+                ) + list(phase_layers_dir.glob("object_ph_layers_Niter*.tif"))
+            layers_path = max(layers_files, key=_iter_from_name) if layers_files else None
+
+            phase_path = None
+            if phase_total_dir.exists():
+                total_files = list(
+                    phase_total_dir.glob("object_ph_total_Niter*.tiff")
+                ) + list(phase_total_dir.glob("object_ph_total_Niter*.tif"))
+                phase_path = max(total_files, key=_iter_from_name) if total_files else None
+            else:
+                single_files = list(phase_single_dir.glob("object_ph_Niter*.tiff")) + list(
+                    phase_single_dir.glob("object_ph_Niter*.tif")
+                )
+                phase_path = max(single_files, key=_iter_from_name) if single_files else None
+
+            if layers_path is None and phase_path is None:
+                raise ValueError("No phase files found for evaluation (layers/total/single).")
 
             # Calculate recon quality metrics based on evaluation mode
             self.log.eval(f"Calculating metrics using {self.eval_mode} mode")
@@ -984,7 +1092,21 @@ class ReconEvaluator:
                 self.log.debug_info(f"Reconstruction directory: {recon_path}", 1)
 
             if self.eval_mode == "ground_truth":
-                eval_metrics = self._calculate_metrics_ground_truth(phase_path)
+                use_layers = layers_path is not None and self.base_params.get(
+                    "number_of_slices", 1
+                ) > 1
+                if use_layers:
+                    self.log.eval("Using layer-wise stack for ground truth evaluation")
+                    self.log.eval(f"Layers path: {layers_path}")
+                    eval_metrics = self._calculate_metrics_ground_truth_layers(layers_path)
+                else:
+                    if phase_path is None:
+                        raise ValueError(
+                            "Layer stack not found and total/single phase image missing."
+                        )
+                    self.log.eval("Using total/single phase image for ground truth evaluation")
+                    self.log.eval(f"Phase path: {phase_path}")
+                    eval_metrics = self._calculate_metrics_ground_truth(phase_path)
             elif self.eval_mode == "human":
                 eval_metrics = self._calculate_metrics_human(phase_path, final_loss)
             elif self.eval_mode == "few_shot":
