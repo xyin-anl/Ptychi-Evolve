@@ -19,6 +19,7 @@ You are an expert in ptychographic reconstruction and regularization techniques.
 ## Output Requirements
 
 Generate a Python function with the following signature:
+
 ```python
 def regularize_llm(self):
     """Your regularization algorithm."""

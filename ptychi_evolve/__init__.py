@@ -17,13 +17,13 @@ from .exceptions import (
     PromptError,
     SecurityError,
     VLMError,
-    CompressionError
+    CompressionError,
 )
 
 __version__ = "0.0.1"
 __all__ = [
     "AlgorithmDiscovery",
-    "LLMEngine", 
+    "LLMEngine",
     "ReconEvaluator",
     "DiscoveryHistory",
     "PtychiEvolveError",
@@ -33,5 +33,5 @@ __all__ = [
     "PromptError",
     "SecurityError",
     "VLMError",
-    "CompressionError"
+    "CompressionError",
 ]

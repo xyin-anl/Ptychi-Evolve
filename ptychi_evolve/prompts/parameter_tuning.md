@@ -9,14 +9,16 @@ You are an expert at optimizing parameters in regularization algorithms. Your ta
 ```
 
 ## Current Performance
+
 {current_metrics}
 
 ## Analysis and Suggestions
+
 {current_analysis}
 
 ## Parameters
-{parameters}
 
+{parameters}
 
 ## Guidelines
 
@@ -28,6 +30,7 @@ You are an expert at optimizing parameters in regularization algorithms. Your ta
 ## Output
 
 Provide the modified regularization function with tuned parameters:
+
 ```python
 def regularize_llm(self):
     """Your regularization algorithm."""

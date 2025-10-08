@@ -3,17 +3,21 @@
 Analyze this regularization algorithm's performance and provide detailed insights.
 
 ## Algorithm Code:
+
 ```python
 {code}
 ```
 
 ## Performance Metrics:
+
 {metrics}
 
 ## Error (if any):
+
 {error}
 
 ## Historical Context:
+
 {history_summary}
 
 ## Analysis Requirements

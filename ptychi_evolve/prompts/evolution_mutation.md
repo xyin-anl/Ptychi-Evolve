@@ -5,15 +5,19 @@ You are tasked with evolving regularization algorithms to create improved varian
 ## Operation: mutation
 
 ## Parent Algorithm:
+
 ```python
 {parent_code}
 ```
+
 Performance: {parent_metrics}
 
 ## Parent's Analysis and Suggestions:
+
 {parent_analysis}
 
 Create a mutated variant by:
+
 - Modifying parameter values
 - Adding or removing operations
 - Changing the order of operations
@@ -31,6 +35,7 @@ Create a mutated variant by:
 ## Output Requirements
 
 Generate a Python function with the following signature:
+
 ```python
 def regularize_llm(self):
     """Your regularization algorithm."""

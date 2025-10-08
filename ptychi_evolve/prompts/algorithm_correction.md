@@ -9,6 +9,7 @@ The following regularization algorithm encountered an error:
 Error Message: {error}
 
 Common issues:
+
 - Tensor dimension mismatches (use .unsqueeze()/.squeeze())
 - Coordinate grid size errors: When creating grids, use the FULL dimensions:
   ```python
@@ -22,6 +23,7 @@ Common issues:
 - Missing imports or undefined functions
 
 Return a Python function with the following signature:
+
 ```python
 def regularize_llm(self):
     """Your regularization algorithm."""

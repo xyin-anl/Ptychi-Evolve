@@ -7,20 +7,25 @@ You are tasked with evolving regularization algorithms to create improved varian
 ## Parent Algorithms
 
 ### Parent 1:
+
 ```python
 {parent1_code}
 ```
+
 Performance: {parent1_metrics}
 Analysis: {parent1_analysis}
 
 ### Parent 2:
+
 ```python
 {parent2_code}
 ```
+
 Performance: {parent2_metrics}
 Analysis: {parent2_analysis}
 
 Create an offspring that combines the best aspects of both parents. Consider:
+
 - Mixing their regularization techniques
 - Blending parameter values
 - Combining complementary operations
@@ -37,6 +42,7 @@ Create an offspring that combines the best aspects of both parents. Consider:
 ## Output Requirements
 
 Generate a Python function with the following signature:
+
 ```python
 def regularize_llm(self):
     """Your regularization algorithm."""
