@@ -13,7 +13,8 @@ Automated discovery, evolution, and tuning of ptychographic reconstruction regul
 ```bash
 conda create -n ptychi python=3.11
 conda activate ptychi
-pip install git+https://github.com/xyin-anl/ptychiX@pear_aps
+
+pip install git+https://github.com/AdvancedPhotonSource/pty-chi@pear_aps
 pip install hdf5plugin pyyaml backoff tifffile Pillow scipy scikit-image openai
 ```
 
