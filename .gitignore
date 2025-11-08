@@ -124,3 +124,7 @@ data_*/
 # logging
 *.log
 *.loglogin
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
