@@ -158,7 +158,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/bf/c9/63f8d545568d9ab91476b1818b4741f521646cbdd151c6efebf40d6de6f7/pandas-2.3.3-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl
-      - pypi: git+https://github.com/AdvancedPhotonSource/pty-chi.git?rev=ff9aced6c191698e9522ae41d1c2b888307b8315#ff9aced6c191698e9522ae41d1c2b888307b8315
+      - pypi: git+https://github.com/AdvancedPhotonSource/pty-chi.git?rev=93ea6532c9068630d358a78e3d79632e04736e00#93ea6532c9068630d358a78e3d79632e04736e00
       - pypi: https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/5e/1aa9a93198c6b64513c9d7752de7422c06402de6600a8767da1524f9570b/pyparsing-3.2.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl
@@ -1857,9 +1857,9 @@ packages:
   purls: []
   size: 8252
   timestamp: 1726802366959
-- pypi: git+https://github.com/AdvancedPhotonSource/pty-chi.git?rev=ff9aced6c191698e9522ae41d1c2b888307b8315#ff9aced6c191698e9522ae41d1c2b888307b8315
+- pypi: git+https://github.com/AdvancedPhotonSource/pty-chi.git?rev=93ea6532c9068630d358a78e3d79632e04736e00#93ea6532c9068630d358a78e3d79632e04736e00
   name: ptychi
-  version: 1.2.1.dev108+gff9aced6c
+  version: 1.2.1.dev123+g93ea6532c
   requires_dist:
   - h5py
   - mypy

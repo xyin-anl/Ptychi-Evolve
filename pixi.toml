@@ -19,4 +19,4 @@ scikit-image = ">=0.25.2,<0.26"
 openai = ">=2.6.1,<3"
 
 [pypi-dependencies]
-ptychi = { git = "https://github.com/AdvancedPhotonSource/pty-chi.git", rev = "ff9aced6c191698e9522ae41d1c2b888307b8315" }
+ptychi = { git = "https://github.com/AdvancedPhotonSource/pty-chi.git", rev = "93ea6532c9068630d358a78e3d79632e04736e00" }
