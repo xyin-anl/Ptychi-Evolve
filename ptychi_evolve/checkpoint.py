@@ -36,11 +36,11 @@ class CheckpointManager:
 
     def save_checkpoint(self, state: Dict[str, Any], force: bool = False) -> bool:
         """
-        Save checkpoint if interval reached or forced.
+        Persist checkpoint data to disk.
 
         Args:
             state: Discovery state to save
-            force: Force save regardless of interval
+            force: Ignored (interval policy enforced by caller)
         """
         # Prepare checkpoint data
         checkpoint = {

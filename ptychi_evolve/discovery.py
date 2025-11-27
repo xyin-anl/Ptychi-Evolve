@@ -257,7 +257,8 @@ class AlgorithmDiscovery:
         config.setdefault("max_correction_attempts", 2)
         config.setdefault("n_warmup_iterations", 5)
         config.setdefault("n_target_algorithms", 10)
-        config.setdefault("checkpoint_interval", 10)
+        # Ensure checkpoint interval is positive
+        config["checkpoint_interval"] = max(1, int(config.get("checkpoint_interval", 10)))
 
         # Evaluation defaults
         if "evaluation" not in config:
@@ -379,7 +380,7 @@ class AlgorithmDiscovery:
 
         # Add web search results if available
         if hasattr(self, "web_search_results") and self.web_search_results:
-            context += "\n\n" + "Common techniques: " + self.web_search_results
+            context += "\n\n" + "Common techniques: " + str(self.web_search_results)
 
         # Add example algorithms if available
         if self.example_algorithms:
@@ -802,11 +803,10 @@ Action: {algo.get('action', 'Unknown')}
 
     def _save_checkpoint(self, force: bool = False) -> bool:
         """Save checkpoint periodically."""
+        interval = max(1, int(self.checkpoint_manager.checkpoint_interval))
         if (
             force
-            or self.stats["total_generated"]
-            % self.checkpoint_manager.checkpoint_interval
-            == 0
+            or self.stats["total_generated"] % interval == 0
         ):
             # Debug logging
             self.log.debug(
