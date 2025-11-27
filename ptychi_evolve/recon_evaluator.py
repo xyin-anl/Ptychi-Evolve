@@ -192,6 +192,13 @@ class ReconEvaluator:
         self.config.setdefault("evaluation", {})["mode"] = self.eval_mode
         self.eval_config["mode"] = self.eval_mode
 
+        # Early warning for non-interactive human mode
+        if self.eval_mode == "human" and not sys.stdin.isatty():
+            self.log.warning(
+                "Human evaluation selected but no interactive TTY detected. "
+                "Consider providing ground truth or enabling VLM modes."
+            )
+
         # Initialize VLM engine if needed and available
         self.vlm_engine = None
         if self.eval_mode in ["few_shot", "vision_description"]:
@@ -531,6 +538,7 @@ class ReconEvaluator:
 
         # Load ground truth
         gt_path = self.eval_config["ground_truth"]["object_path"]
+        gt_path = str(gt_path)
         if gt_path.endswith(".mat"):
             gt_data = scipy.io.loadmat(gt_path)
             gt_phase = gt_data.get("phase", gt_data.get("object_phase", None))
@@ -595,9 +603,12 @@ class ReconEvaluator:
         if win_size % 2 == 0:
             win_size -= 1
         win_size = max(win_size, 3)
+        data_range = float(img1.max() - img1.min())
+        if data_range <= 0:
+            data_range = 1.0  # Avoid SSIM crash on constant images
         return float(
             structural_similarity(
-                img1, img2, data_range=img1.max() - img1.min(), win_size=win_size
+                img1, img2, data_range=data_range, win_size=win_size
             )
         )
 
@@ -644,12 +655,13 @@ class ReconEvaluator:
         gt_path = gt_cfg.get("object_path")
         if not gt_path:
             raise ValueError("Ground truth path is missing for layer-wise evaluation.")
+        gt_path = str(gt_path)
 
         rec_stack = tifffile.imread(str(layers_path)).astype(_np.float32) / 65535.0
         if rec_stack.ndim != 3:
             raise ValueError(f"Reconstructed layers TIFF must be 3D (L,H,W); got {rec_stack.shape}")
 
-        gt_stack = tifffile.imread(str(gt_path)).astype(_np.float32)
+        gt_stack = tifffile.imread(gt_path).astype(_np.float32)
         if gt_stack.ndim != 3:
             raise ValueError(f"Ground-truth TIFF stack must be 3D; got {gt_stack.shape}")
 
@@ -1102,6 +1114,7 @@ class ReconEvaluator:
 
             # Calculate recon quality metrics based on evaluation mode
             self.log.eval(f"Calculating metrics using {self.eval_mode} mode")
+            eval_image_path = phase_path if phase_path is not None else layers_path
 
             if self.debug:
                 self.log.debug_info("[DEBUG] Reconstruction results:")
@@ -1127,14 +1140,20 @@ class ReconEvaluator:
                     self.log.eval(f"Phase path: {phase_path}")
                     eval_metrics = self._calculate_metrics_ground_truth(phase_path)
             elif self.eval_mode == "human":
-                eval_metrics = self._calculate_metrics_human(phase_path, final_loss)
+                if eval_image_path is None:
+                    raise ValueError("No reconstruction image available for human evaluation.")
+                eval_metrics = self._calculate_metrics_human(eval_image_path, final_loss)
             elif self.eval_mode == "few_shot":
+                if eval_image_path is None:
+                    raise ValueError("No reconstruction image available for VLM few-shot evaluation.")
                 eval_metrics = self._calculate_metrics_vlm_few_shot(
-                    phase_path, algorithm_data or {}, final_loss
+                    eval_image_path, algorithm_data or {}, final_loss
                 )
             elif self.eval_mode == "vision_description":
+                if eval_image_path is None:
+                    raise ValueError("No reconstruction image available for VLM description evaluation.")
                 eval_metrics = self._calculate_metrics_vlm_description(
-                    phase_path, algorithm_data or {}, final_loss
+                    eval_image_path, algorithm_data or {}, final_loss
                 )
             else:
                 raise ValueError(f"Invalid evaluation mode: {self.eval_mode}")

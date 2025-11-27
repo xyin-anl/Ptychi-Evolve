@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Tuple, Union
 import openai
 from openai import OpenAI
 from PIL import Image
-from ptychi_evolve.logging import get_logger
+from .logging import get_logger
+from .utils import extract_json_from_text
 
 
 class VLMEngine:
@@ -158,29 +159,6 @@ class VLMEngine:
 
         return messages
 
-    def _extract_json_from_text(
-        self, source: Union[str, "openai.types.Response"]
-    ) -> Dict[str, Any]:
-        """Extract JSON from response text."""
-        text = source.output_text if hasattr(source, "output_text") else str(source)
-
-        # Try JSON fence first
-        fence = re.search(r"```json\s*([\s\S]+?)```", text, re.IGNORECASE)
-        if fence:
-            try:
-                return json.loads(fence.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # Try parsing the whole text as JSON
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Return raw text as fallback
-        return {"raw_text": text}
-
     def evaluate_with_few_shot(self, image_path: Path) -> Dict[str, Any]:
         """Evaluate reconstruction using few-shot learning.
 
@@ -206,7 +184,7 @@ class VLMEngine:
                 input=messages,
             )
 
-            return self._extract_json_from_text(response)
+            return extract_json_from_text(response)
 
         except Exception as e:
             self.log.error(f"VLM API call failed: {e}")
@@ -274,7 +252,7 @@ Please provide your evaluation in JSON format:
                 input=messages,
             )
 
-            return self._extract_json_from_text(response)
+            return extract_json_from_text(response)
 
         except Exception as e:
             self.log.error(f"VLM API call failed: {e}")
