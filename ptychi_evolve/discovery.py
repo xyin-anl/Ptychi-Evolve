@@ -774,6 +774,13 @@ Action: {algo.get('action', 'Unknown')}
             if saved_context and not self.experiment_context:
                 self.experiment_context = saved_context
 
+            # Restore web search results; treat string "None" or empty as missing
+            wsr = checkpoint.get("web_search_results", None)
+            if wsr in (None, "None", ""):
+                self.web_search_results = None
+            else:
+                self.web_search_results = wsr
+
             self.log.checkpoint(f"Resuming with {self.history.size()} algorithms")
 
     def _sanitize_for_json(self, obj):
@@ -829,7 +836,7 @@ Action: {algo.get('action', 'Unknown')}
                 "experiment_context": (
                     str(self.experiment_context) if self.experiment_context else None
                 ),
-                "web_search_results": str(getattr(self, "web_search_results", None)),
+                "web_search_results": getattr(self, "web_search_results", None),
             }
 
             # Log what we're about to save

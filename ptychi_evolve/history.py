@@ -366,9 +366,10 @@ class DiscoveryHistory:
         recent_count = min(self.recent_for_context, len(self.algorithms))
         if recent_count > 0:
             for i in range(len(self.algorithms) - recent_count, len(self.algorithms)):
-                perf_level = self._classify_performance(
-                    self.algorithms[i].get("metrics", {})
-                )
+                algo = self.algorithms[i]
+                if not algo.get("success", False):
+                    continue
+                perf_level = self._classify_performance(algo.get("metrics", {}))
                 if perf_level != "incomplete":
                     keep_indices.add(i)
 
