@@ -1159,6 +1159,10 @@ class ReconEvaluator:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
 
+            # Treat metric calculation failures as evaluation failure
+            if eval_metrics.get("metrics_error"):
+                return False, eval_metrics, eval_metrics.get("metrics_error")
+
             # Check if human evaluation was aborted
             if eval_metrics.get("structured_evaluation", {}).get("aborted", False):
                 return False, eval_metrics, "Evaluation aborted by user"
