@@ -57,7 +57,7 @@ class LLMEngine:
         # Store prompts for crossover fallback
         self.prompts = config.get("prompts", {})
 
-    @backoff.on_exception(backoff.expo, (openai.OpenAIError,), max_tries=3)
+    @backoff.on_exception(backoff.expo, (openai.APIError,), max_tries=3)
     def _call_llm(
         self,
         input_content: Union[str, List[Dict]],
@@ -297,7 +297,7 @@ class LLMEngine:
 
         response = self._call_llm(
             input_content=formatted_prompt,
-            tools=[{"type": "web_search_preview"}] if self.web_search_enabled else None,
+            tools=[{"type": "web_search"}] if self.web_search_enabled else None,
             use_reasoning=True,
         )
 

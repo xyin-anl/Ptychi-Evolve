@@ -3,10 +3,8 @@
 import base64
 import json
 from pathlib import Path
-import re
 import io
-from typing import Any, Dict, List, Tuple, Union
-import openai
+from typing import Any, Dict, List, Tuple
 from openai import OpenAI
 from PIL import Image
 from .logging import get_logger
@@ -182,6 +180,7 @@ class VLMEngine:
             response = self.client.responses.create(
                 model=self.model,
                 input=messages,
+                text={"format": {"type": "json_object"}},
             )
 
             return extract_json_from_text(response)
@@ -250,6 +249,7 @@ Please provide your evaluation in JSON format:
             response = self.client.responses.create(
                 model=self.model,
                 input=messages,
+                text={"format": {"type": "json_object"}},
             )
 
             return extract_json_from_text(response)
