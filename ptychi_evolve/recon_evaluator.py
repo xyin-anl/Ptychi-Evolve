@@ -24,6 +24,7 @@ except ImportError:
     VLMEngine = None
 
 from .logging import get_logger
+from .exceptions import ConfigurationError
 
 # VLM availability will be checked during initialization
 
@@ -194,9 +195,9 @@ class ReconEvaluator:
 
         # Early warning for non-interactive human mode
         if self.eval_mode == "human" and not sys.stdin.isatty():
-            self.log.warning(
+            raise ConfigurationError(
                 "Human evaluation selected but no interactive TTY detected. "
-                "Consider providing ground truth or enabling VLM modes."
+                "Provide ground truth or enable VLM modes, or run interactively."
             )
         # If VLM confirmation is requested but no TTY, disable confirmation to avoid blocking
         if self.eval_mode in ["few_shot", "vision_description"]:
@@ -215,7 +216,7 @@ class ReconEvaluator:
                 self.eval_mode
             )
             # Pass full config to VLM engine
-            self.vlm_engine = VLMEngine(config)
+            self.vlm_engine = VLMEngine(config, verbose=self.verbose, debug=self.debug)
 
             # Load few-shot examples if in few-shot mode
             if self.eval_mode == "few_shot":
