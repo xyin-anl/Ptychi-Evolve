@@ -117,11 +117,11 @@ class VLMEngine:
                     "role": "user",
                     "content": [
                         {
-                            "type": "text",
+                            "type": "input_text",
                             "text": f"Example {i+1}: Please evaluate this ptychographic reconstruction.",
                         },
                         {
-                            "type": "image_url",
+                            "type": "input_image",
                             "image_url": {
                                 "url": f"data:image/{image_type};base64,{base64_image}",
                                 "detail": "high",
@@ -142,11 +142,11 @@ class VLMEngine:
                 "role": "user",
                 "content": [
                     {
-                        "type": "text",
+                        "type": "input_text",
                         "text": f"""Now evaluate this new reconstruction, please provide a structured evaluation in JSON format following the same structure as the examples""",
                     },
                     {
-                        "type": "image_url",
+                        "type": "input_image",
                         "image_url": {
                             "url": f"data:image/{image_type};base64,{base64_image}",
                             "detail": "high",
@@ -230,7 +230,7 @@ class VLMEngine:
                 "role": "user",
                 "content": [
                     {
-                        "type": "text",
+                        "type": "input_text",
                         "text": f"""Please evaluate this ptychographic reconstruction.
 
 Please provide your evaluation in JSON format:
@@ -240,7 +240,7 @@ Please provide your evaluation in JSON format:
 }}""",
                     },
                     {
-                        "type": "image_url",
+                        "type": "input_image",
                         "image_url": {
                             "url": f"data:image/{image_type};base64,{base64_image}",
                             "detail": "high",
