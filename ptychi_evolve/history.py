@@ -17,7 +17,14 @@ N_RECENT_ALGORITHMS = 20  # default; can be overridden via config
 class DiscoveryHistory:
     """Storage for algorithm discovery history and performance tracking."""
 
-    def _get_ground_truth_metric(self, metrics: Dict[str, Any]) -> float:
+    @staticmethod
+    def _to_float_or_none(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    def _get_ground_truth_metric(self, metrics: Dict[str, Any]) -> Optional[float]:
         """Extract ground truth metric value with case-insensitive lookup."""
         label = self.performance_levels_ground_truth_label
         for key, value in metrics.items():
@@ -43,6 +50,8 @@ class DiscoveryHistory:
             if not present:
                 return "unknown"
             ground_truth_value = self._get_ground_truth_metric(metrics)
+            if ground_truth_value is None:
+                return "unknown"
             # Guard against NaN values
             try:
                 if isinstance(ground_truth_value, float) and math.isnan(
@@ -80,7 +89,11 @@ class DiscoveryHistory:
                 and qualitative_label in metrics["structured_evaluation"]
             ):
                 eval_data = metrics["structured_evaluation"]
-                qualitative_value = eval_data.get(qualitative_label, 0)
+                qualitative_value = self._to_float_or_none(
+                    eval_data.get(qualitative_label, 0)
+                )
+                if qualitative_value is None:
+                    return "unknown"
                 # Guard against NaN values
                 try:
                     if isinstance(qualitative_value, float) and math.isnan(
@@ -200,7 +213,7 @@ class DiscoveryHistory:
         )
         self.performance_levels_ground_truth_label_sense = analysis_config.get(
             "performance_levels_ground_truth_label_sense", "higher_is_better"
-        )
+        ).lower()
         self.performance_levels_ground_truth = {
             "excellent": 0.9,
             "good": 0.8,
@@ -217,7 +230,7 @@ class DiscoveryHistory:
         ), "performance_levels_qualitative_label must be a numerical label"
         self.performance_levels_qualitative_label_sense = analysis_config.get(
             "performance_levels_qualitative_label_sense", "higher_is_better"
-        )
+        ).lower()
         self.performance_levels_qualitative = {
             "excellent": 0.9,
             "good": 0.7,
@@ -471,12 +484,15 @@ class DiscoveryHistory:
             )[:n]
         else:
             # Filter out algorithms without the qualitative metric
-            algorithms_with_metric = [
-                algo
-                for algo in candidates
-                if self.performance_levels_qualitative_label
-                in algo.get("metrics", {}).get("structured_evaluation", {})
-            ]
+            algorithms_with_metric = []
+            for algo in candidates:
+                seval = algo.get("metrics", {}).get("structured_evaluation", {})
+                if self.performance_levels_qualitative_label in seval:
+                    val = self._to_float_or_none(
+                        seval.get(self.performance_levels_qualitative_label)
+                    )
+                    if val is not None:
+                        algorithms_with_metric.append((algo, val))
 
             if not algorithms_with_metric:
                 if self.algorithms:
@@ -484,16 +500,15 @@ class DiscoveryHistory:
                     pass
                 return []
 
-            return sorted(
+            sorted_algos = sorted(
                 algorithms_with_metric,
-                key=lambda algo: algo["metrics"]["structured_evaluation"].get(
-                    self.performance_levels_qualitative_label, 0
-                ),
+                key=lambda pair: pair[1],
                 reverse=(
                     self.performance_levels_qualitative_label_sense
                     == "higher_is_better"
                 ),
-            )[:n]
+            )
+            return [pair[0] for pair in sorted_algos[:n]]
 
     def get_by_performance(self, level: str) -> List[Dict[str, Any]]:
         """Get algorithms by performance level."""
