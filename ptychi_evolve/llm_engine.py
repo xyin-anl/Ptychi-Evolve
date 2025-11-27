@@ -13,7 +13,7 @@ from openai import OpenAI
 import backoff
 from .logging import get_logger
 from .exceptions import PromptError
-from .utils import extract_json_from_text
+from .utils import extract_json_from_text, response_text
 
 if TYPE_CHECKING:
     from .history import DiscoveryHistory
@@ -130,18 +130,16 @@ class LLMEngine:
             response = self.client.responses.create(**params)
 
             self.log.debug_info("LLM Response:")
-            if hasattr(response, "output_text"):
-                self.log.debug_info(
-                    f"Output length: {len(response.output_text)} chars", 1
-                )
+            resp_text = response_text(response)
+            if resp_text is not None:
+                self.log.debug_info(f"Output length: {len(resp_text)} chars", 1)
                 self.log.debug_info("Output content (first 800 chars):", 1)
-                # Show more of the output
-                output_preview = response.output_text[:800]
+                output_preview = resp_text[:800]
                 for line in output_preview.split("\n"):
                     self.log.debug_info(f"{line}", 2)
-                if len(response.output_text) > 800:
+                if len(resp_text) > 800:
                     self.log.debug_info(
-                        f"... ({len(response.output_text) - 800} more chars)", 2
+                        f"... ({len(resp_text) - 800} more chars)", 2
                     )
 
             return response
