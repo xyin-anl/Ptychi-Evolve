@@ -9,6 +9,7 @@ import uuid
 import signal
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import importlib.resources as resources
 
 from .llm_engine import LLMEngine
 from .recon_evaluator import ReconEvaluator
@@ -148,7 +149,10 @@ class AlgorithmDiscovery:
         self._load_checkpoint()
 
         # Set up signal handlers for graceful shutdown
-        self._original_sigint = signal.signal(signal.SIGINT, self._signal_handler)
+        try:
+            self._original_sigint = signal.signal(signal.SIGINT, self._signal_handler)
+        except (AttributeError, ValueError):
+            self._original_sigint = None
         try:
             self._original_sigterm = signal.signal(signal.SIGTERM, self._signal_handler)
         except (AttributeError, ValueError):
@@ -198,6 +202,11 @@ class AlgorithmDiscovery:
 
         # Load all required prompt templates from package prompts folder
         prompts_dir = Path(__file__).parent / "prompts"
+        prompts_pkg = f"{__package__}.prompts"
+        try:
+            prompts_root = resources.files(prompts_pkg)
+        except Exception:
+            prompts_root = None
         # Preserve existing prompts from config, if any - handle None value explicitly
         if "prompts" not in config or config["prompts"] is None:
             config["prompts"] = {}
@@ -209,12 +218,22 @@ class AlgorithmDiscovery:
             if prompt_name in config["prompts"]:
                 continue
 
-            # Look for template file
-            prompt_file = prompts_dir / f"{prompt_name}.md"
-            if prompt_file.exists():
-                # Use absolute path
-                full_path = prompt_file.resolve()
-                config["prompts"][prompt_name] = full_path.read_text()
+            prompt_content = None
+
+            # Try package resources first (works for zipped installs)
+            if prompts_root is not None:
+                pkg_prompt = prompts_root.joinpath(f"{prompt_name}.md")
+                if pkg_prompt.is_file():
+                    prompt_content = pkg_prompt.read_text(encoding="utf-8")
+
+            # Fallback to filesystem path for editable installs
+            if prompt_content is None:
+                prompt_file = prompts_dir / f"{prompt_name}.md"
+                if prompt_file.exists():
+                    prompt_content = prompt_file.read_text()
+
+            if prompt_content is not None:
+                config["prompts"][prompt_name] = prompt_content
             else:
                 missing_prompts.append(prompt_name)
 

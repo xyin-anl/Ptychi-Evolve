@@ -17,22 +17,24 @@ class PtychiEvolveFilter(logging.Filter):
         return (
             record.name.startswith("ptychi_evolve")
             or record.name == "__main__"
-            or record.name == "root"
-            and any(
-                tag in record.getMessage()
-                for tag in [
-                    "[INIT]",
-                    "[DISCOVERY]",
-                    "[GENERATE]",
+            or (
+                record.name == "root"
+                and any(
+                    tag in record.getMessage()
+                    for tag in [
+                        "[INIT]",
+                        "[DISCOVERY]",
+                        "[GENERATE]",
                     "[EVAL]",
                     "[LLM]",
                     "[PROCESS]",
                     "[TUNE]",
                     "[EVOLVE]",
-                    "[CHECKPOINT]",
-                    "[CORRECT]",
-                    "[DECISION]",
-                ]
+                        "[CHECKPOINT]",
+                        "[CORRECT]",
+                        "[DECISION]",
+                    ]
+                )
             )
         )
 
