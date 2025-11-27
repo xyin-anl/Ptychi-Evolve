@@ -23,7 +23,7 @@ try:
 except ImportError:
     VLMEngine = None
 
-from ptychi_evolve.logging import get_logger
+from .logging import get_logger
 
 # VLM availability will be checked during initialization
 
@@ -198,6 +198,13 @@ class ReconEvaluator:
                 "Human evaluation selected but no interactive TTY detected. "
                 "Consider providing ground truth or enabling VLM modes."
             )
+        # If VLM confirmation is requested but no TTY, disable confirmation to avoid blocking
+        if self.eval_mode in ["few_shot", "vision_description"]:
+            if self.eval_config.get("human_confirmation", True) and not sys.stdin.isatty():
+                self.log.warning(
+                    "VLM human_confirmation=True but no interactive TTY detected. Disabling confirmation."
+                )
+                self.eval_config["human_confirmation"] = False
 
         # Initialize VLM engine if needed and available
         self.vlm_engine = None
@@ -292,9 +299,6 @@ class ReconEvaluator:
             "beam_source": recon_config.get("beam_source", "xray"),
             "beam_energy_kev": recon_config.get("beam_energy_kev", 8.0),
             "det_sample_dist_m": recon_config.get("det_sample_dist_m", 0.5),
-            "dk": safe_eval_math(
-                recon_config.get("dk")
-            ),  # Critical for object size - evaluates math expressions
             "diff_pattern_size_pix": recon_config.get("diff_pattern_size_pix", 256),
             "diff_pattern_center_x": recon_config.get("diff_pattern_center_x", 128),
             "diff_pattern_center_y": recon_config.get("diff_pattern_center_y", 128),
@@ -352,6 +356,16 @@ class ReconEvaluator:
             ),
             "object_regularization_llm": True,  # Always true for LLM regularization
         }
+
+        # Validate dk explicitly to avoid propagating strings
+        dk_raw = recon_config.get("dk")
+        dk_value = safe_eval_math(dk_raw)
+        if not isinstance(dk_value, (int, float)):
+            raise ValueError(
+                f"Invalid dk expression '{dk_raw}'. "
+                "dk must be a numeric value or math expression."
+            )
+        params["dk"] = dk_value
 
         return params
 
@@ -597,12 +611,15 @@ class ReconEvaluator:
         """Compute SSIM between two images."""
         from skimage.metrics import structural_similarity
 
-        # Use a reasonable, valid odd window size (>=3)
         min_dim = min(img1.shape)
+        if min_dim < 3:
+            # SSIM window cannot exceed image dims; fallback to equality check
+            return 1.0 if np.allclose(img1, img2) else 0.0
+
+        # Use a reasonable, valid odd window size (<= min_dim)
         win_size = min(7, min_dim)
         if win_size % 2 == 0:
             win_size -= 1
-        win_size = max(win_size, 3)
         data_range = float(img1.max() - img1.min())
         if data_range <= 0:
             data_range = 1.0  # Avoid SSIM crash on constant images
@@ -660,6 +677,11 @@ class ReconEvaluator:
         rec_stack = tifffile.imread(str(layers_path)).astype(_np.float32) / 65535.0
         if rec_stack.ndim != 3:
             raise ValueError(f"Reconstructed layers TIFF must be 3D (L,H,W); got {rec_stack.shape}")
+
+        if not (gt_path.endswith(".tif") or gt_path.endswith(".tiff")):
+            raise ValueError(
+                f"Layer-wise ground truth evaluation expects a TIFF stack, got '{gt_path}'."
+            )
 
         gt_stack = tifffile.imread(gt_path).astype(_np.float32)
         if gt_stack.ndim != 3:
