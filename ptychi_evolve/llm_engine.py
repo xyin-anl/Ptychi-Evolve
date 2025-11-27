@@ -7,13 +7,16 @@ Uses OpenAI Responses API with web search capabilities.
 import re
 import json
 import time
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
 import openai
 from openai import OpenAI
 import backoff
-from ptychi_evolve.history import DiscoveryHistory
-from ptychi_evolve.logging import get_logger
-from ptychi_evolve.exceptions import PromptError
+from .logging import get_logger
+from .exceptions import PromptError
+from .utils import extract_json_from_text
+
+if TYPE_CHECKING:
+    from .history import DiscoveryHistory
 
 
 class LLMEngine:
@@ -54,7 +57,7 @@ class LLMEngine:
         # Store prompts for crossover fallback
         self.prompts = config.get("prompts", {})
 
-    @backoff.on_exception(backoff.expo, Exception, max_tries=3)
+    @backoff.on_exception(backoff.expo, (openai.OpenAIError,), max_tries=3)
     def _call_llm(
         self,
         input_content: Union[str, List[Dict]],
@@ -89,7 +92,7 @@ class LLMEngine:
                     else self.web_search_enabled
                 )
                 if use_search:
-                    web_search_tool = {"type": "web_search_preview"}
+                    web_search_tool = {"type": "web_search"}
                     # Add search context size if specified
                     if self.search_context_size:
                         web_search_tool["search_context_size"] = (
@@ -233,114 +236,6 @@ class LLMEngine:
         # Assemble & return
         return {"code": code_block}
 
-    def _extract_json_from_text(
-        self, source: Union[str, "openai.types.Response"]
-    ) -> Dict[str, Any]:
-        """
-        Extract the first valid JSON object from either a Response or plain text.
-        Prefers the structured JSON-mode output when available.
-        """
-
-        # 1) Structured JSON mode (`text.format.type == "json_object"`)
-        if hasattr(source, "output_text"):
-            text_obj = getattr(source, "text", None)
-            if text_obj and hasattr(text_obj, "format"):
-                fmt_obj = text_obj.format
-                # Check if it's JSON mode
-                if hasattr(fmt_obj, "type") and fmt_obj.type == "json_object":
-                    try:
-                        return json.loads(source.output_text)
-                    except json.JSONDecodeError as e:
-                        self.log.warning(f"JSON mode response failed to parse: {e}")
-                elif hasattr(fmt_obj, "model_dump"):
-                    fmt_dict = fmt_obj.model_dump()
-                    if fmt_dict.get("type") == "json_object":
-                        try:
-                            return json.loads(source.output_text)
-                        except json.JSONDecodeError as e:
-                            self.log.warning(f"JSON mode response failed to parse: {e}")
-
-        text = source.output_text if hasattr(source, "output_text") else str(source)
-
-        # Truncate extremely long responses to prevent parsing issues
-        if len(text) > 50000:  # 50KB limit
-            self.log.warning(
-                f"Response too long ({len(text)} chars), truncating to first 50KB"
-            )
-            text = text[:50000]
-
-        # 2) ```json …``` fence
-        fence = re.search(r"```json\s*([\s\S]+?)```", text, re.IGNORECASE)
-        if fence:
-            try:
-                return json.loads(fence.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # 3) Balanced-brace sweep (properly handles braces inside quotes)
-        depth, start = 0, None
-        in_string = False
-        escape_next = False
-
-        for i, ch in enumerate(text):
-            # Handle escape sequences
-            if escape_next:
-                escape_next = False
-                continue
-
-            if ch == "\\" and in_string:
-                escape_next = True
-                continue
-
-            # Toggle string state
-            if ch == '"' and not escape_next:
-                in_string = not in_string
-                continue
-
-            # Only count braces outside of strings
-            if not in_string:
-                if ch == "{":
-                    if depth == 0:
-                        start = i
-                    depth += 1
-                elif ch == "}" and depth > 0:
-                    depth -= 1
-                    if depth == 0 and start is not None:
-                        snippet = text[start : i + 1]
-                        try:
-                            return json.loads(snippet)
-                        except json.JSONDecodeError:
-                            start = None
-
-        # 4) Try to extract a reasonable JSON object from the beginning
-        # Look for the first complete JSON object in the first 10KB
-        search_text = text[:10000]
-        brace_count = 0
-        start_idx = None
-
-        for i, char in enumerate(search_text):
-            if char == "{" and start_idx is None:
-                start_idx = i
-                brace_count = 1
-            elif char == "{" and start_idx is not None:
-                brace_count += 1
-            elif char == "}" and start_idx is not None:
-                brace_count -= 1
-                if brace_count == 0:
-                    try:
-                        json_str = search_text[start_idx : i + 1]
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        start_idx = None
-                        brace_count = 0
-
-        # 5) Give up – return error info
-        self.log.error(f"Failed to extract JSON from response of length {len(text)}")
-        return {
-            "error": "Failed to parse JSON response",
-            "response_length": len(text),
-            "response_preview": text[:500] + "..." if len(text) > 500 else text,
-        }
 
     def web_search_context(self, prompt: str, user_context: str) -> Dict[str, Any]:
         """Perform web search on experiment setup and ptychography.
@@ -585,7 +480,7 @@ class LLMEngine:
         )
 
         # Extract JSON from response
-        analysis = self._extract_json_from_text(response)
+        analysis = extract_json_from_text(response)
 
         # Add raw response text for debugging if JSON extraction failed or returned an error
         if "raw_text" in analysis or "error" in analysis:
@@ -818,7 +713,7 @@ Respond with JSON:
                 disable_web_search=True,  # Static code analysis doesn't need web search
             )
 
-            result = self._extract_json_from_text(response)
+            result = extract_json_from_text(response)
 
             return result
 
