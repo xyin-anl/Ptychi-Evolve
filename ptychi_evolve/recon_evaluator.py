@@ -188,6 +188,10 @@ class ReconEvaluator:
             )
             self.eval_mode = "human"
 
+        # Keep shared config in sync so downstream components see the resolved mode
+        self.config.setdefault("evaluation", {})["mode"] = self.eval_mode
+        self.eval_config["mode"] = self.eval_mode
+
         # Initialize VLM engine if needed and available
         self.vlm_engine = None
         if self.eval_mode in ["few_shot", "vision_description"]:
@@ -811,6 +815,9 @@ class ReconEvaluator:
             # Also store suggested action at top level for discovery
             if "suggested_action" in human_metrics:
                 metrics["suggested_action"] = human_metrics["suggested_action"]
+            # Surface aborted flag so history classification can mark it incomplete
+            if human_metrics.get("aborted"):
+                metrics["aborted"] = True
 
         except Exception as e:
             self.log.error(f"Failed to calculate human evaluation metrics: {e}")
@@ -878,8 +885,12 @@ class ReconEvaluator:
                 # Extract suggested action if present
                 if "suggested_action" in confirmed_results:
                     metrics["suggested_action"] = confirmed_results["suggested_action"]
+                if confirmed_results.get("aborted"):
+                    metrics["aborted"] = True
             else:
                 metrics["structured_evaluation"] = vlm_results
+                if vlm_results.get("aborted"):
+                    metrics["aborted"] = True
 
         except Exception as e:
             self.log.error(f"Failed to calculate VLM few-shot metrics: {e}")
@@ -944,10 +955,16 @@ class ReconEvaluator:
                     # Extract suggested action if present
                     if "suggested_action" in human_metrics:
                         metrics["suggested_action"] = human_metrics["suggested_action"]
+                    if human_metrics.get("aborted"):
+                        metrics["aborted"] = True
                 else:
                     metrics["structured_evaluation"] = vlm_results
+                    if vlm_results.get("aborted"):
+                        metrics["aborted"] = True
             else:
                 metrics["structured_evaluation"] = vlm_results
+                if vlm_results.get("aborted"):
+                    metrics["aborted"] = True
 
         except Exception as e:
             self.log.error(f"Failed to extract VLM description metrics: {e}")
@@ -1071,8 +1088,10 @@ class ReconEvaluator:
                 total_files = list(
                     phase_total_dir.glob("object_ph_total_Niter*.tiff")
                 ) + list(phase_total_dir.glob("object_ph_total_Niter*.tif"))
-                phase_path = max(total_files, key=_iter_from_name) if total_files else None
-            else:
+                if total_files:
+                    phase_path = max(total_files, key=_iter_from_name)
+
+            if phase_path is None:
                 single_files = list(phase_single_dir.glob("object_ph_Niter*.tiff")) + list(
                     phase_single_dir.glob("object_ph_Niter*.tif")
                 )

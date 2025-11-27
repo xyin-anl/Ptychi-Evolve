@@ -129,7 +129,11 @@ class DiscoveryHistory:
 
         for i, algo in enumerate(self.algorithms):
             # Performance index
-            perf_level = self._classify_performance(algo.get("metrics", {}))
+            perf_level = (
+                self._classify_performance(algo.get("metrics", {}))
+                if algo.get("success", False)
+                else "incomplete"
+            )
             self.performance_index[perf_level].append(i)
 
     def _load_existing(self) -> None:
@@ -548,7 +552,11 @@ class DiscoveryHistory:
         self.algorithms.append(algorithm)
 
         # Index by performance
-        perf_level = self._classify_performance(algorithm.get("metrics", {}))
+        perf_level = (
+            self._classify_performance(algorithm.get("metrics", {}))
+            if algorithm.get("success", False)
+            else "incomplete"
+        )
         self.performance_index[perf_level].append(len(self.algorithms) - 1)
 
         # Check if compression needed
@@ -582,10 +590,19 @@ class DiscoveryHistory:
         except (TypeError, ValueError):
             # Fallback: sanitize numerics to strings
             from math import isinf, isnan
+            try:
+                import numpy as _np
+            except Exception:
+                _np = None
 
             def _sf(o):
+                # Normalize numpy scalars
+                if _np is not None and isinstance(o, _np.generic):
+                    o = o.item()
                 if isinstance(o, float) and (isinf(o) or isnan(o)):
                     return "Infinity" if isinf(o) else "NaN"
+                if not isinstance(o, (str, int, float, bool, type(None))):
+                    return str(o)
                 return o
 
             def _walk(x):

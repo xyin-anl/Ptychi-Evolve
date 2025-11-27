@@ -13,6 +13,7 @@ from openai import OpenAI
 import backoff
 from ptychi_evolve.history import DiscoveryHistory
 from ptychi_evolve.logging import get_logger
+from ptychi_evolve.exceptions import PromptError
 
 
 class LLMEngine:
@@ -349,7 +350,7 @@ class LLMEngine:
         self.log.llm(f"Starting web search with model: {self.reasoning_model}")
 
         # web_search.md
-        search_prompt = prompt.format(user_context=user_context)
+        search_prompt = self._format_prompt(prompt, user_context=user_context)
 
         # Fallback to regular model with web search
         response = self._call_llm(
@@ -366,6 +367,18 @@ class LLMEngine:
 
         return search_results
 
+    def _format_prompt(self, prompt: str, **kwargs) -> str:
+        """Format prompt templates with clearer errors for unescaped braces."""
+        try:
+            return prompt.format(**kwargs)
+        except (KeyError, IndexError, ValueError) as e:
+            available = ", ".join(sorted(kwargs.keys()))
+            raise PromptError(
+                f"Failed to format prompt: {e}. "
+                "Ensure literal braces are escaped with double braces and only these fields are used: "
+                f"{available}"
+            ) from e
+
     def generate_algorithm(
         self, prompt: str, context: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -375,7 +388,8 @@ class LLMEngine:
             self.log.llm("Web search enabled")
 
         # Format the prompt (discovery.md) with context
-        formatted_prompt = prompt.format(
+        formatted_prompt = self._format_prompt(
+            prompt,
             recent_algorithms=json.dumps(
                 context.get("recent_algorithms", []), indent=2
             ),
@@ -422,7 +436,8 @@ class LLMEngine:
 
         # parameter_tuning.md
         visible_metrics = self._filter_metrics_for_llm(algorithm.get("metrics", {}))
-        tuning_prompt = prompt.format(
+        tuning_prompt = self._format_prompt(
+            prompt,
             code=algorithm["code"],
             current_metrics=json.dumps(visible_metrics, indent=2),
             current_analysis=json.dumps(algorithm.get("analysis", {}), indent=2),
@@ -453,7 +468,8 @@ class LLMEngine:
                 # Use crossover-specific template
                 parent1_visible = self._filter_metrics_for_llm(parent1.get("metrics", {}))
                 parent2_visible = self._filter_metrics_for_llm(parent2.get("metrics", {}))
-                crossover_prompt = prompt.format(
+                crossover_prompt = self._format_prompt(
+                    prompt,
                     parent1_code=parent1["code"],
                     parent1_metrics=json.dumps(parent1_visible, indent=2),
                     parent1_analysis=json.dumps(parent1.get("analysis", {}), indent=2),
@@ -473,9 +489,11 @@ class LLMEngine:
             elif i < len(population):
                 # Handle odd population size - mutate the last algorithm instead of dropping it
                 parent = population[i]
-                mutation_prompt = self.prompts["evolution_mutation"].format(
+                parent_visible = self._filter_metrics_for_llm(parent.get("metrics", {}))
+                mutation_prompt = self._format_prompt(
+                    self.prompts["evolution_mutation"],
                     parent_code=parent["code"],
-                    parent_metrics=json.dumps(parent["metrics"], indent=2),
+                    parent_metrics=json.dumps(parent_visible, indent=2),
                     parent_analysis=json.dumps(parent.get("analysis", {}), indent=2),
                 )
                 response = self._call_llm(
@@ -497,7 +515,8 @@ class LLMEngine:
         for parent in population:
             # Use mutation-specific template
             parent_visible = self._filter_metrics_for_llm(parent.get("metrics", {}))
-            mutation_prompt = prompt.format(
+            mutation_prompt = self._format_prompt(
+                prompt,
                 parent_code=parent["code"],
                 parent_metrics=json.dumps(parent_visible, indent=2),
                 parent_analysis=json.dumps(parent.get("analysis", {}), indent=2),
@@ -530,7 +549,7 @@ class LLMEngine:
         self.log.llm(f"Correcting algorithm error: {error[:50]}...")
 
         # algorithm_correction.md
-        correction_prompt = prompt.format(code=algorithm["code"], error=error)
+        correction_prompt = self._format_prompt(prompt, code=algorithm["code"], error=error)
 
         response = self._call_llm(
             input_content=correction_prompt,
@@ -549,7 +568,8 @@ class LLMEngine:
 
         # analysis.md
         visible_metrics = self._filter_metrics_for_llm(algorithm.get("metrics", {}))
-        analysis_prompt = prompt.format(
+        analysis_prompt = self._format_prompt(
+            prompt,
             code=algorithm["code"],
             metrics=json.dumps(visible_metrics, indent=2),
             error=algorithm.get("error", "None"),
@@ -627,6 +647,9 @@ class LLMEngine:
         label = (self.config.get("analysis", {}) or {}).get(
             "performance_levels_ground_truth_label", "ssim"
         )
+        qual_label = (self.config.get("analysis", {}) or {}).get(
+            "performance_levels_qualitative_label", "quality_score"
+        )
         sense = (self.config.get("analysis", {}) or {}).get(
             "performance_levels_ground_truth_label_sense", "higher_is_better"
         )
@@ -651,8 +674,8 @@ class LLMEngine:
             # Human/VLM modes: keep compact info
             if isinstance(metrics, dict) and "structured_evaluation" in metrics:
                 ev = metrics["structured_evaluation"]
-                if label in ev:
-                    payload[label] = ev[label]
+                if qual_label in ev:
+                    payload[qual_label] = ev[qual_label]
                 if "feedback" in ev:
                     payload["feedback"] = ev["feedback"]
             if isinstance(metrics, dict) and "suggested_action" in metrics:
@@ -786,7 +809,7 @@ Respond with JSON:
     "issues": ["list of specific security issues found"],
 }}"""
 
-        formatted_prompt = security_prompt.format(context=context, code=code)
+        formatted_prompt = self._format_prompt(security_prompt, context=context, code=code)
 
         try:
             response = self._call_llm(
