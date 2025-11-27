@@ -583,6 +583,14 @@ class AlgorithmDiscovery:
                 algorithm["corrected"] = True
                 self.stats.setdefault("total_corrections", 0)
                 self.stats["total_corrections"] += 1
+                # Analyze corrected results if now successful
+                if algorithm.get("success", False):
+                    analysis = self.llm.analyze_results(
+                        prompt=self.config["prompts"]["analysis"],
+                        algorithm=algorithm,
+                        history=self.history,
+                    )
+                    algorithm["analysis"] = analysis
 
         # Add to history
         self.history.add(algorithm)
@@ -742,21 +750,6 @@ Action: {algo.get('action', 'Unknown')}
             self.log.checkpoint("Loaded checkpoint - resuming from previous session")
             self.stats = checkpoint.get("stats", self.stats)
 
-            # Restore web search results if available
-            self.web_search_results = checkpoint.get("web_search_results", None)
-            if not self.web_search_results and getattr(
-                self.llm, "web_search_enabled", False
-            ):
-                self.web_search_results = self.llm.web_search_context(
-                    prompt=self.config["prompts"]["web_search"],
-                    user_context=self.experiment_context,
-                )
-                self.web_search_results = (
-                    str(self.web_search_results["results"])
-                    if self.web_search_results
-                    else ""
-                )
-
             # Reconstruct history from serialized data
             history_data = checkpoint.get("history", {})
             if isinstance(history_data, dict) and "algorithms" in history_data:
@@ -774,12 +767,18 @@ Action: {algo.get('action', 'Unknown')}
             if saved_context and not self.experiment_context:
                 self.experiment_context = saved_context
 
-            # Restore web search results; treat string "None" or empty as missing
+            # Restore or recompute web search results
             wsr = checkpoint.get("web_search_results", None)
-            if wsr in (None, "None", ""):
-                self.web_search_results = None
-            else:
+            if wsr not in (None, "None", ""):
                 self.web_search_results = wsr
+            elif getattr(self.llm, "web_search_enabled", False) and self.experiment_context:
+                web = self.llm.web_search_context(
+                    prompt=self.config["prompts"]["web_search"],
+                    user_context=self.experiment_context,
+                )
+                self.web_search_results = str(web["results"]) if web else ""
+            else:
+                self.web_search_results = None
 
             self.log.checkpoint(f"Resuming with {self.history.size()} algorithms")
 
@@ -862,7 +861,7 @@ Action: {algo.get('action', 'Unknown')}
         if not self.experiment_context:
             self.experiment_context = self.gather_experiment_context()
 
-        max_attempts = max_iterations or self.max_attempts
+        max_attempts = self.max_attempts if max_iterations is None else max_iterations
         self.log.info(f"Starting discovery session with max {max_attempts} attempts")
 
         if self.verbose:

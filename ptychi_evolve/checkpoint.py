@@ -42,12 +42,6 @@ class CheckpointManager:
             state: Discovery state to save
             force: Force save regardless of interval
         """
-        total_generated = state.get("stats", {}).get("total_generated", 0)
-
-        # Check if we should save
-        if not force and total_generated % self.checkpoint_interval != 0:
-            return False
-
         # Prepare checkpoint data
         checkpoint = {
             "timestamp": time.time(),
@@ -121,7 +115,7 @@ class CheckpointManager:
             # Log success - always show checkpoint saves
             self.log.checkpoint(f"✓ Checkpoint saved to {self.checkpoint_file}")
             self.log.checkpoint(
-                f"  Generation: {total_generated}, Algorithms: {len(state.get('history', {}).get('algorithms', []))}"
+                f"  Generation: {state.get('stats', {}).get('total_generated', 0)}, Algorithms: {len(state.get('history', {}).get('algorithms', []))}"
             )
             return True
         except Exception as e:
