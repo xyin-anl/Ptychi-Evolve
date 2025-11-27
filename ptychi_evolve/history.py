@@ -19,19 +19,11 @@ class DiscoveryHistory:
 
     def _get_ground_truth_metric(self, metrics: Dict[str, Any]) -> float:
         """Extract ground truth metric value with case-insensitive lookup."""
-        # Try exact match first
-        if self.performance_levels_ground_truth_label in metrics:
-            return metrics[self.performance_levels_ground_truth_label]
-        # Try case-insensitive match
-        for key in metrics:
-            if key.lower() == self.performance_levels_ground_truth_label.lower():
-                return metrics[key]
-        # Return default based on sense
-        return (
-            0
-            if self.performance_levels_ground_truth_label_sense == "higher_is_better"
-            else float("inf")
-        )
+        label = self.performance_levels_ground_truth_label
+        for key, value in metrics.items():
+            if key.lower() == label.lower():
+                return value
+        return None
 
     def _classify_performance(self, metrics: Dict[str, Any]) -> str:
         """Classify algorithm performance based on metrics."""
@@ -280,9 +272,15 @@ class DiscoveryHistory:
                         _, algo = item
                         return self._get_ground_truth_metric(algo.get("metrics", {}))
 
+                    filtered = []
+                    for item in moderate_algos:
+                        val = get_metric_value(item)
+                        if val is not None:
+                            filtered.append((item[0], val))
+
                     sorted_moderates = sorted(
-                        moderate_algos,
-                        key=get_metric_value,
+                        filtered,
+                        key=lambda item: item[1],
                         reverse=(
                             self.performance_levels_ground_truth_label_sense
                             == "higher_is_better"
@@ -332,9 +330,15 @@ class DiscoveryHistory:
                         _, algo = item
                         return self._get_ground_truth_metric(algo.get("metrics", {}))
 
+                    filtered = []
+                    for item in poor_algos:
+                        val = get_metric_value(item)
+                        if val is not None:
+                            filtered.append((item[0], val))
+
                     sorted_poor = sorted(
-                        poor_algos,
-                        key=get_metric_value,
+                        filtered,
+                        key=lambda item: item[1],
                         reverse=(
                             self.performance_levels_ground_truth_label_sense
                             == "higher_is_better"
@@ -427,6 +431,22 @@ class DiscoveryHistory:
             return []
 
         if self.config["evaluation"]["mode"] == "ground_truth":
+            label = self.performance_levels_ground_truth_label
+            sense = self.performance_levels_ground_truth_label_sense
+
+            def has_label(metrics: Dict[str, Any]) -> bool:
+                return any(k.lower() == label.lower() for k in metrics.keys())
+
+            candidates_with_metric = [
+                algo
+                for algo in candidates
+                if has_label(algo.get("metrics", {}))
+                and self._get_ground_truth_metric(algo.get("metrics", {})) is not None
+            ]
+
+            if not candidates_with_metric:
+                return []
+
             # Use helper for ground truth metric extraction with NaN handling
             def get_metric_value_safe(algo):
                 val = self._get_ground_truth_metric(algo.get("metrics", {}))
@@ -435,7 +455,7 @@ class DiscoveryHistory:
                     if math.isnan(val):
                         return (
                             float("-inf")
-                            if self.performance_levels_ground_truth_label_sense
+                            if sense
                             == "higher_is_better"
                             else float("inf")
                         )
@@ -444,12 +464,9 @@ class DiscoveryHistory:
                 return val
 
             return sorted(
-                candidates,
+                candidates_with_metric,
                 key=get_metric_value_safe,
-                reverse=(
-                    self.performance_levels_ground_truth_label_sense
-                    == "higher_is_better"
-                ),
+                reverse=(sense == "higher_is_better"),
             )[:n]
         else:
             # Filter out algorithms without the qualitative metric
