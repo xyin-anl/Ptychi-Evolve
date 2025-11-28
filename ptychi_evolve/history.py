@@ -37,6 +37,15 @@ class DiscoveryHistory:
                 return numeric_value
         return None
 
+    def _get_ground_truth_metric_with_fallback(
+        self, metrics: Dict[str, Any]
+    ) -> Optional[float]:
+        """Primary ground truth metric with configured fallbacks."""
+        val = self._get_ground_truth_metric(metrics)
+        if val is not None:
+            return val
+        return self._get_fallback_ground_truth_metric(metrics)
+
     def _get_fallback_ground_truth_metric(
         self, metrics: Dict[str, Any]
     ) -> Optional[float]:
@@ -302,7 +311,9 @@ class DiscoveryHistory:
                     # Sort by ground truth metric
                     def get_metric_value(item):
                         _, algo = item
-                        return self._get_ground_truth_metric(algo.get("metrics", {}))
+                        return self._get_ground_truth_metric_with_fallback(
+                            algo.get("metrics", {})
+                        )
 
                     filtered = []
                     for item in moderate_algos:
@@ -369,7 +380,9 @@ class DiscoveryHistory:
                     # Sort by ground truth metric
                     def get_metric_value(item):
                         _, algo = item
-                        return self._get_ground_truth_metric(algo.get("metrics", {}))
+                        return self._get_ground_truth_metric_with_fallback(
+                            algo.get("metrics", {})
+                        )
 
                     filtered = []
                     for item in poor_algos:
@@ -485,22 +498,22 @@ class DiscoveryHistory:
             label = self.performance_levels_ground_truth_label
             sense = self.performance_levels_ground_truth_label_sense
 
-            def has_label(metrics: Dict[str, Any]) -> bool:
-                return any(k.lower() == label.lower() for k in metrics.keys())
+            def get_metric_value(algo: Dict[str, Any]) -> Optional[float]:
+                return self._get_ground_truth_metric_with_fallback(
+                    algo.get("metrics", {})
+                )
 
-            candidates_with_metric = [
-                algo
-                for algo in candidates
-                if has_label(algo.get("metrics", {}))
-                and self._get_ground_truth_metric(algo.get("metrics", {})) is not None
-            ]
+            candidate_pairs = []
+            for algo in candidates:
+                val = get_metric_value(algo)
+                if val is not None:
+                    candidate_pairs.append((algo, val))
 
-            if not candidates_with_metric:
+            if not candidate_pairs:
                 return []
 
             # Use helper for ground truth metric extraction with NaN handling
-            def get_metric_value_safe(algo):
-                val = self._get_ground_truth_metric(algo.get("metrics", {}))
+            def get_metric_value_safe(val: float):
                 # Handle NaN by returning worst possible value; guard non-floats
                 try:
                     if math.isnan(val):
@@ -514,11 +527,13 @@ class DiscoveryHistory:
                     pass
                 return val
 
-            return sorted(
-                candidates_with_metric,
-                key=get_metric_value_safe,
+            sorted_pairs = sorted(
+                candidate_pairs,
+                key=lambda pair: get_metric_value_safe(pair[1]),
                 reverse=(sense == "higher_is_better"),
-            )[:n]
+            )
+            # Extract just the algorithm objects
+            return [pair[0] for pair in sorted_pairs[:n]]
         else:
             # Filter out algorithms without the qualitative metric
             algorithms_with_metric = []
