@@ -141,6 +141,7 @@ class ReconEvaluator:
 
         # Evaluation mode: 'ground_truth', 'human', 'few_shot', 'vision_description', 'auto'
         self.eval_mode = self.eval_config.get("mode", "human")
+        self._auto_mode_requested = self.eval_mode == "auto"
         self.ground_truth_available = self._check_ground_truth()
         self._fell_back_from_ground_truth = False
 
@@ -232,6 +233,31 @@ class ReconEvaluator:
             # Load few-shot examples if in few-shot mode
             if self.eval_mode == "few_shot":
                 self._load_few_shot_examples()
+                if not self.vlm_engine.few_shot_examples:
+                    if self._auto_mode_requested:
+                        fallback_mode = (
+                            "vision_description"
+                            if self.eval_config.get("evaluation_description")
+                            else "human"
+                        )
+                        self.log.warning(
+                            "Auto mode selected few_shot evaluation, but no valid few-shot examples were loaded. "
+                            f"Falling back to {fallback_mode} mode."
+                        )
+                        self.eval_mode = fallback_mode
+                        self.config["evaluation"]["mode"] = fallback_mode
+                        self.eval_config["mode"] = fallback_mode
+                        if fallback_mode == "human" and not sys.stdin.isatty():
+                            raise ConfigurationError(
+                                "Auto-selected human evaluation after missing few-shot examples, "
+                                "but no interactive TTY is available. "
+                                "Provide valid few-shot examples, a ground truth file, or run interactively."
+                            )
+                    else:
+                        raise ConfigurationError(
+                            "Few-shot evaluation selected but no valid few-shot examples were loaded. "
+                            "Check evaluation.few_shot_examples paths."
+                        )
 
     def _check_ground_truth(self) -> bool:
         """Check if ground truth is available."""
@@ -300,7 +326,7 @@ class ReconEvaluator:
             field for field in required_fields if field not in recon_config
         ]
         if missing_fields:
-            raise ValueError(
+            raise ConfigurationError(
                 f"Missing required reconstruction config fields: {', '.join(missing_fields)}"
             )
 
@@ -373,7 +399,7 @@ class ReconEvaluator:
         dk_raw = recon_config.get("dk")
         dk_value = safe_eval_math(dk_raw)
         if not isinstance(dk_value, (int, float)):
-            raise ValueError(
+            raise ConfigurationError(
                 f"Invalid dk expression '{dk_raw}'. "
                 "dk must be a numeric value or math expression."
             )
