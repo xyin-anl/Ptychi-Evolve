@@ -290,12 +290,21 @@ class DiscoveryHistory:
                     )
                 else:
                     # Sort by qualitative metric
+                    filtered_moderates = []
+                    for idx, algo in moderate_algos:
+                        seval = algo.get("metrics", {}).get("structured_evaluation", {})
+                        val = self._to_float_or_none(
+                            seval.get(self.performance_levels_qualitative_label)
+                            if isinstance(seval, dict)
+                            else None
+                        )
+                        if val is None:
+                            continue
+                        filtered_moderates.append((idx, val))
+
                     sorted_moderates = sorted(
-                        moderate_algos,
-                        key=lambda item: item[1]
-                        .get("metrics", {})
-                        .get("structured_evaluation", {})
-                        .get(self.performance_levels_qualitative_label, 0),
+                        filtered_moderates,
+                        key=lambda item: item[1],
                         reverse=(
                             self.performance_levels_qualitative_label_sense
                             == "higher_is_better"
@@ -348,12 +357,21 @@ class DiscoveryHistory:
                     )
                 else:
                     # Sort by qualitative metric
+                    filtered_poor = []
+                    for idx, algo in poor_algos:
+                        seval = algo.get("metrics", {}).get("structured_evaluation", {})
+                        val = self._to_float_or_none(
+                            seval.get(self.performance_levels_qualitative_label)
+                            if isinstance(seval, dict)
+                            else None
+                        )
+                        if val is None:
+                            continue
+                        filtered_poor.append((idx, val))
+
                     sorted_poor = sorted(
-                        poor_algos,
-                        key=lambda item: item[1]
-                        .get("metrics", {})
-                        .get("structured_evaluation", {})
-                        .get(self.performance_levels_qualitative_label, 0),
+                        filtered_poor,
+                        key=lambda item: item[1],
                         reverse=(
                             self.performance_levels_qualitative_label_sense
                             == "higher_is_better"
