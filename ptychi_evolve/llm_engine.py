@@ -3,6 +3,7 @@ LLM Engine for algorithm discovery.
 Powers all text processing, code generation, and analysis operations.
 Uses OpenAI Responses API with web search capabilities.
 """
+from __future__ import annotations
 
 import re
 import json
@@ -41,9 +42,13 @@ class LLMEngine:
         self.reasoning_effort = self.llm_config.get("reasoning_effort", "medium")
 
         # Web search configuration
-        self.web_search_enabled = config.get("search", {}).get("enabled", True)
-        self.search_model = config.get("search", {}).get("model", "gpt-4.1")
-        self.search_context_size = self.llm_config.get("search_context_size", "medium")
+        search_config = config.get("search", {})
+        self.web_search_enabled = search_config.get("enabled", True)
+        self.search_model = search_config.get("model", "gpt-4.1")
+        # Keep backwards compatibility: allow llm.search_context_size but prefer search.context_size
+        self.search_context_size = search_config.get(
+            "context_size", self.llm_config.get("search_context_size", "medium")
+        )
 
         self.log.llm(f"Initialized with model: {self.model}")
         self.log.llm(f"Reasoning model: {self.reasoning_model}")
@@ -84,6 +89,10 @@ class LLMEngine:
             # Add instructions if provided
             if instructions:
                 params["instructions"] = instructions
+
+            # Guard against unsupported tools+JSON combination
+            if json_mode and tools:
+                raise ValueError("json_mode=True is not compatible with tools/web_search")
 
             # Add tools (web search, etc.)
             # Note: Web search cannot be used with JSON mode
@@ -251,7 +260,8 @@ class LLMEngine:
 
         Uses the web search API.
         """
-        self.log.llm(f"Starting web search with model: {self.reasoning_model}")
+        model_used = self.search_model or self.reasoning_model
+        self.log.llm(f"Starting web search with model: {model_used}")
 
         # web_search.md
         search_prompt = self._format_prompt(prompt, user_context=user_context)
@@ -287,9 +297,13 @@ class LLMEngine:
         self, prompt: str, context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Generate a new regularization algorithm with web search."""
-        self.log.llm(f"Generating algorithm with {self.reasoning_model}")
-        if self.web_search_enabled:
-            self.log.llm("Web search enabled")
+        model_used = (
+            self.search_model if self.web_search_enabled else self.reasoning_model
+        )
+        self.log.llm(
+            f"Generating algorithm with {model_used}"
+            + (" (web search enabled)" if self.web_search_enabled else "")
+        )
 
         # Format the prompt (discovery.md) with context
         formatted_prompt = self._format_prompt(
