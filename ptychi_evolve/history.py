@@ -37,6 +37,35 @@ class DiscoveryHistory:
                 return numeric_value
         return None
 
+    def _get_fallback_ground_truth_metric(
+        self, metrics: Dict[str, Any]
+    ) -> Optional[float]:
+        """Return numeric fallback metric when primary ground-truth label is missing."""
+        for fb_label in self.ground_truth_fallback_labels:
+            for key, value in metrics.items():
+                if key.lower() != fb_label.lower():
+                    continue
+                numeric_value = self._to_float_or_none(value)
+                if numeric_value is None or not math.isfinite(numeric_value):
+                    continue
+                if not self._missing_primary_metric_warned:
+                    logging.warning(
+                        f"Primary ground truth metric '{self.performance_levels_ground_truth_label}' not found; "
+                        f"falling back to '{fb_label}'. Update analysis.performance_levels_ground_truth_label "
+                        "or provide the primary metric in evaluation results."
+                    )
+                    self._missing_primary_metric_warned = True
+                return numeric_value
+
+        if not self._missing_primary_metric_warned:
+            logging.warning(
+                f"Primary ground truth metric '{self.performance_levels_ground_truth_label}' not found in metrics; "
+                "classification will return 'unknown'. Configure ground truth metrics or set "
+                "analysis.ground_truth_fallback_labels."
+            )
+            self._missing_primary_metric_warned = True
+        return None
+
     def _classify_performance(self, metrics: Dict[str, Any]) -> str:
         """Classify algorithm performance based on metrics."""
         if not metrics:
@@ -49,12 +78,9 @@ class DiscoveryHistory:
         # For ground truth mode
         eval_mode = self.config.get("evaluation", {}).get("mode", "ground_truth")
         if eval_mode == "ground_truth":
-            # Ensure the requested label is actually present before using fallback
-            label = self.performance_levels_ground_truth_label
-            present = any(k.lower() == label.lower() for k in metrics.keys())
-            if not present:
-                return "unknown"
             ground_truth_value = self._get_ground_truth_metric(metrics)
+            if ground_truth_value is None:
+                ground_truth_value = self._get_fallback_ground_truth_metric(metrics)
             if ground_truth_value is None:
                 return "unknown"
 
@@ -203,12 +229,16 @@ class DiscoveryHistory:
         self.performance_levels_ground_truth_label_sense = analysis_config.get(
             "performance_levels_ground_truth_label_sense", "higher_is_better"
         ).lower()
+        self.ground_truth_fallback_labels = analysis_config.get(
+            "ground_truth_fallback_labels", ["ssim", "psnr"]
+        )
         self.performance_levels_ground_truth = {
             "excellent": 0.9,
             "good": 0.8,
             "moderate": 0.6,
             **analysis_config.get("performance_levels_ground_truth", {}),
         }
+        self._missing_primary_metric_warned = False
 
         # Qualitative performance configuration
         self.performance_levels_qualitative_label = analysis_config.get(
