@@ -8,8 +8,7 @@ import re
 import json
 import time
 from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
-import openai
-from openai import OpenAI
+from openai import OpenAI, APIError, APIStatusError, RateLimitError, APITimeoutError
 import backoff
 from .logging import get_logger
 from .exceptions import PromptError
@@ -57,7 +56,11 @@ class LLMEngine:
         # Store prompts for crossover fallback
         self.prompts = config.get("prompts", {})
 
-    @backoff.on_exception(backoff.expo, (openai.APIError,), max_tries=3)
+    @backoff.on_exception(
+        backoff.expo,
+        (APIError, APIStatusError, RateLimitError, APITimeoutError),
+        max_tries=3,
+    )
     def _call_llm(
         self,
         input_content: Union[str, List[Dict]],
