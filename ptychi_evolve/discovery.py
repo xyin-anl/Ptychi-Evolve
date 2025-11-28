@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 import signal
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import importlib.resources as resources
@@ -276,6 +277,13 @@ class AlgorithmDiscovery:
         # Skip interaction if running in automated mode
         if self.config.get("automated", False):
             return "Automated mode - no experiment context provided"
+
+        # Prevent hanging on non-interactive runs
+        if not sys.stdin.isatty():
+            raise ConfigurationError(
+                "No experiment_context provided and no interactive TTY available. "
+                "Either pass experiment_context explicitly or set config['automated']=True."
+            )
 
         # Interactive prompt
         self.log.discovery("EXPERIMENT CONTEXT GATHERING")
