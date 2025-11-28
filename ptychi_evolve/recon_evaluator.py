@@ -138,12 +138,17 @@ class ReconEvaluator:
 
         # Base reconstruction parameters from config
         self.base_params = self._load_base_params()
+        self.is_multislice = self.base_params.get("number_of_slices", 1) > 1
 
         # Evaluation mode: 'ground_truth', 'human', 'few_shot', 'vision_description', 'auto'
         self.eval_mode = self.eval_config.get("mode", "human")
         self._auto_mode_requested = self.eval_mode == "auto"
         self.ground_truth_available = self._check_ground_truth()
         self._fell_back_from_ground_truth = False
+        self._ground_truth_is_tiff_stack = False
+        self._ground_truth_stack_depth = None
+        if self.ground_truth_available:
+            self._inspect_ground_truth_structure()
 
         self.log.eval(f"Initialized with mode: {self.eval_mode}")
         self.log.eval(f"Ground truth available: {self.ground_truth_available}")
@@ -195,6 +200,36 @@ class ReconEvaluator:
         # Keep shared config in sync so downstream components see the resolved mode
         self.config.setdefault("evaluation", {})["mode"] = self.eval_mode
         self.eval_config["mode"] = self.eval_mode
+
+        # --- Multi-slice guards ---
+        if self.is_multislice and self.eval_mode in [
+            "human",
+            "few_shot",
+            "vision_description",
+        ]:
+            raise ConfigurationError(
+                "Multi-slice reconstruction detected (reconstruction.number_of_slices > 1), "
+                f"but evaluation.mode='{self.eval_mode}' was requested.\n"
+                "Human and VLM-based evaluation modes are currently supported only for "
+                "single-slice data. Please either:\n"
+                "  - switch to 'ground_truth' mode with a layer-wise 3D TIFF stack as "
+                "evaluation.ground_truth.object_path, or\n"
+                "  - set reconstruction.number_of_slices=1 if you intend to run a single-slice reconstruction."
+            )
+
+        if (
+            self.is_multislice
+            and self.eval_mode == "ground_truth"
+            and not getattr(self, "_ground_truth_is_tiff_stack", False)
+        ):
+            raise ConfigurationError(
+                "Multi-slice reconstruction detected (reconstruction.number_of_slices > 1), "
+                "but evaluation.ground_truth.object_path does not look like a 3D TIFF stack.\n"
+                "Multi-slice ground-truth evaluation currently expects a TIFF stack with "
+                "shape (L, H, W), where L matches reconstruction.number_of_slices.\n"
+                "Please convert your ground-truth volume to a TIFF stack and update "
+                "evaluation.ground_truth.object_path."
+            )
 
         # Early warning for non-interactive human mode
         if self.eval_mode == "human" and not sys.stdin.isatty():
@@ -271,9 +306,76 @@ class ReconEvaluator:
 
         return Path(gt_path).exists()
 
+    def _inspect_ground_truth_structure(self) -> None:
+        """Inspect ground truth to determine if it is a multi-slice TIFF stack."""
+        gt_config = self.eval_config.get("ground_truth", {})
+        gt_path = gt_config.get("object_path")
+        if not gt_path:
+            return
+
+        suffix = Path(gt_path).suffix.lower()
+        if suffix not in [".tif", ".tiff"]:
+            # Non-TIFF formats are treated as single-slice for now
+            if self.is_multislice:
+                self.log.warning(
+                    f"Ground truth file '{gt_path}' is not a TIFF stack (.tif/.tiff); "
+                    "multi-slice ground-truth evaluation expects a 3D TIFF stack."
+                )
+            return
+
+        try:
+            import tifffile
+
+            data = tifffile.imread(str(gt_path))
+        except Exception as e:
+            self.log.warning(
+                f"Failed to inspect ground truth file '{gt_path}': {e}. "
+                "Assuming it is not a multi-slice stack."
+            )
+            return
+
+        if data.ndim == 3:
+            self._ground_truth_is_tiff_stack = True
+            self._ground_truth_stack_depth = int(data.shape[0])
+            if self.is_multislice and self._ground_truth_stack_depth != self.base_params.get(
+                "number_of_slices", 1
+            ):
+                self.log.warning(
+                    f"Ground truth TIFF stack depth ({self._ground_truth_stack_depth}) "
+                    f"does not match reconstruction.number_of_slices "
+                    f"({self.base_params.get('number_of_slices', 1)}). "
+                    "Layer-wise metrics will still be computed but layer indexing may not correspond exactly."
+                )
+        else:
+            if self.is_multislice:
+                self.log.warning(
+                    f"Ground truth TIFF '{gt_path}' is not 3D (ndim={data.ndim}); "
+                    "multi-slice ground-truth evaluation expects a 3D TIFF stack."
+                )
+
     def _determine_auto_mode(self) -> str:
         """Automatically determine the best evaluation mode based on available resources."""
-        # Priority order:
+        is_multislice = self.base_params.get("number_of_slices", 1) > 1
+
+        # Multi-slice datasets: restrict to ground-truth with valid TIFF stack
+        if is_multislice:
+            if self.ground_truth_available and getattr(
+                self, "_ground_truth_is_tiff_stack", False
+            ):
+                return "ground_truth"
+
+            raise ConfigurationError(
+                "evaluation.mode='auto' was requested for a multi-slice dataset "
+                "(reconstruction.number_of_slices > 1), but no compatible multi-slice "
+                "ground-truth TIFF stack is configured.\n"
+                "Human and VLM-based evaluation modes are currently supported only for "
+                "single-slice data. Please either:\n"
+                "  - provide a 3D TIFF stack in evaluation.ground_truth.object_path, or\n"
+                "  - set reconstruction.number_of_slices=1 if you intend to run a "
+                "single-slice reconstruction."
+            )
+
+        # Single-slice datasets: priority order
         # 1. Ground truth (if available)
         if self.ground_truth_available:
             return "ground_truth"
@@ -1184,17 +1286,24 @@ class ReconEvaluator:
                 self.log.debug_info(f"Reconstruction directory: {recon_path}", 1)
 
             if self.eval_mode == "ground_truth":
-                use_layers = layers_path is not None and self.base_params.get(
-                    "number_of_slices", 1
-                ) > 1
-                if use_layers:
+                if self.is_multislice:
+                    # We already validated at __init__ that the GT is a 3D TIFF stack.
+                    if layers_path is None:
+                        raise ValueError(
+                            "Multi-slice ground-truth evaluation was requested, but no "
+                            f"'object_ph_layers_Niter*.tif(f)' files were found in {phase_layers_dir}.\n"
+                            "Ensure that pear.ptycho_recon is configured to save the layer-wise "
+                            "phase stack under 'object_ph_layers'."
+                        )
                     self.log.eval("Using layer-wise stack for ground truth evaluation")
                     self.log.eval(f"Layers path: {layers_path}")
                     eval_metrics = self._calculate_metrics_ground_truth_layers(layers_path)
                 else:
+                    # Single-slice (or effectively single-layer) ground truth
                     if phase_path is None:
                         raise ValueError(
-                            "Layer stack not found and total/single phase image missing."
+                            "Ground-truth evaluation was requested, but no phase image was found "
+                            f"under {phase_total_dir} or {phase_single_dir}."
                         )
                     self.log.eval("Using total/single phase image for ground truth evaluation")
                     self.log.eval(f"Phase path: {phase_path}")
