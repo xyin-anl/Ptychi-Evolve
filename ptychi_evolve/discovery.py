@@ -784,12 +784,12 @@ Action: {algo.get('action', 'Unknown')}
             self.log.checkpoint(f"Resuming with {self.history.size()} algorithms")
 
     def _sanitize_for_json(self, obj):
-        """Recursively convert non-serializable and NaN/Inf values to safe strings."""
+        """Recursively convert non-serializable values and strip NaN/Inf."""
         import math
 
         if isinstance(obj, float):
             if math.isnan(obj) or math.isinf(obj):
-                return "Infinity" if math.isinf(obj) else "NaN"
+                return None
             return obj
         if isinstance(obj, (str, int, bool, type(None))):
             return obj

@@ -29,7 +29,12 @@ class DiscoveryHistory:
         label = self.performance_levels_ground_truth_label
         for key, value in metrics.items():
             if key.lower() == label.lower():
-                return value
+                numeric_value = self._to_float_or_none(value)
+                if numeric_value is None:
+                    return None
+                if not math.isfinite(numeric_value):
+                    return None
+                return numeric_value
         return None
 
     def _classify_performance(self, metrics: Dict[str, Any]) -> str:
@@ -52,14 +57,6 @@ class DiscoveryHistory:
             ground_truth_value = self._get_ground_truth_metric(metrics)
             if ground_truth_value is None:
                 return "unknown"
-            # Guard against NaN values
-            try:
-                if isinstance(ground_truth_value, float) and math.isnan(
-                    ground_truth_value
-                ):
-                    return "unknown"
-            except Exception:
-                pass
 
             if self.performance_levels_ground_truth_label_sense == "higher_is_better":
                 # Sort thresholds in descending order to check highest first
@@ -92,16 +89,8 @@ class DiscoveryHistory:
                 qualitative_value = self._to_float_or_none(
                     eval_data.get(qualitative_label, 0)
                 )
-                if qualitative_value is None:
+                if qualitative_value is None or not math.isfinite(qualitative_value):
                     return "unknown"
-                # Guard against NaN values
-                try:
-                    if isinstance(qualitative_value, float) and math.isnan(
-                        qualitative_value
-                    ):
-                        return "unknown"
-                except Exception:
-                    pass
 
                 # Map quality score to performance levels
                 if (
