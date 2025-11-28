@@ -40,18 +40,21 @@ class LLMEngine:
         # Reasoning models configuration
         self.reasoning_effort = self.llm_config.get("reasoning_effort", "medium")
 
+        # Web search configuration
+        self.web_search_enabled = config.get("search", {}).get("enabled", True)
+        self.search_model = config.get("search", {}).get("model", "gpt-4.1")
+        self.search_context_size = self.llm_config.get("search_context_size", "medium")
+
         self.log.llm(f"Initialized with model: {self.model}")
         self.log.llm(f"Reasoning model: {self.reasoning_model}")
         self.log.llm(
-            f"Web search: {'enabled' if config.get('search', {}).get('enabled', True) else 'disabled'}"
+            f"Web search: {'enabled' if self.web_search_enabled else 'disabled'}"
         )
+        if self.web_search_enabled:
+            self.log.llm(f"Search model: {self.search_model}")
 
         # Setup OpenAI client
         self.client = OpenAI(timeout=600)
-
-        # Web search configuration
-        self.web_search_enabled = config.get("search", {}).get("enabled", True)
-        self.search_context_size = self.llm_config.get("search_context_size", "medium")
 
         # Store prompts for crossover fallback
         self.prompts = config.get("prompts", {})
@@ -75,7 +78,6 @@ class LLMEngine:
         try:
             # Build request parameters for Responses API
             params = {
-                "model": self.model if not use_reasoning else self.reasoning_model,
                 "input": input_content,  # Can be string or list of messages
             }
 
@@ -106,6 +108,14 @@ class LLMEngine:
             # Add reasoning for supported models
             if use_reasoning:
                 params["reasoning"] = {"effort": self.reasoning_effort}
+
+            # Choose model after tools/reasoning are decided
+            selected_model = (
+                self.reasoning_model if use_reasoning else self.model
+            )
+            if params.get("tools"):
+                selected_model = self.search_model or selected_model
+            params["model"] = selected_model
 
             if json_mode:
                 params["text"] = {"format": {"type": "json_object"}}
@@ -157,8 +167,10 @@ class LLMEngine:
         """Extract the algorithm code from the response."""
 
         # Normalise to plain text
-        if hasattr(source, "output_text"):  # Response object
-            text = source.output_text or ""
+        text = response_text(source)
+        fmt = {}
+
+        if not isinstance(source, str):
             # Get format info, handling Pydantic models
             text_obj = getattr(source, "text", None)
             if text_obj and hasattr(text_obj, "format"):
@@ -170,10 +182,6 @@ class LLMEngine:
                     fmt = fmt_obj.dict()
                 else:
                     fmt = {}
-            else:
-                fmt = {}
-        else:  # Raw string
-            text, fmt = str(source), {}
 
         # Code-block extraction (3-pass strategy)
         code_block: Optional[str] = None
@@ -255,7 +263,7 @@ class LLMEngine:
             use_reasoning=True,
         )
 
-        search_results = {"results": response.output_text, "timestamp": time.time()}
+        search_results = {"results": response_text(response), "timestamp": time.time()}
         if self.debug:
             self.log.debug_info(f"[DEBUG] Web search results:")
             self.log.debug_info(f"Results: {search_results['results']}", 1)
@@ -485,11 +493,7 @@ class LLMEngine:
 
         # Add raw response text for debugging if JSON extraction failed or returned an error
         if "raw_text" in analysis or "error" in analysis:
-            analysis["_debug_raw_response"] = (
-                response.output_text
-                if hasattr(response, "output_text")
-                else str(response)
-            )
+            analysis["_debug_raw_response"] = response_text(response)
 
         if self.debug:
             self.log.debug_info("[DEBUG] Analysis results:")

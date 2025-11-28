@@ -7,11 +7,34 @@ from typing import Any, Dict, Union
 
 def response_text(source: Union[str, Any]) -> str:
     """Return text content from a Response-like object or plain string."""
-    if hasattr(source, "output_text"):
-        try:
-            return source.output_text
-        except Exception:
-            pass
+    if isinstance(source, str):
+        return source
+
+    # Prefer output_text when available (Responses API convenience)
+    txt = getattr(source, "output_text", None)
+    if txt:
+        return txt
+
+    # Fallback for SDKs without output_text: walk output[].content[].text
+    try:
+        output = getattr(source, "output", None) or []
+        chunks = []
+        for msg in output:
+            for content in getattr(msg, "content", []):
+                text_obj = getattr(content, "text", None)
+                if text_obj is None:
+                    continue
+                # Pydantic models expose .value
+                value = getattr(text_obj, "value", None)
+                if value is not None:
+                    chunks.append(str(value))
+                else:
+                    chunks.append(str(text_obj))
+        if chunks:
+            return "\n".join(chunks)
+    except Exception:
+        pass
+
     return str(source)
 
 
