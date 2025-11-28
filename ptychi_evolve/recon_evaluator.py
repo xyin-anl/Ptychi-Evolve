@@ -142,6 +142,7 @@ class ReconEvaluator:
         # Evaluation mode: 'ground_truth', 'human', 'few_shot', 'vision_description', 'auto'
         self.eval_mode = self.eval_config.get("mode", "human")
         self.ground_truth_available = self._check_ground_truth()
+        self._fell_back_from_ground_truth = False
 
         self.log.eval(f"Initialized with mode: {self.eval_mode}")
         self.log.eval(f"Ground truth available: {self.ground_truth_available}")
@@ -188,6 +189,7 @@ class ReconEvaluator:
                 "Ground truth is not available for ground truth mode evaluation, falling back to human mode"
             )
             self.eval_mode = "human"
+            self._fell_back_from_ground_truth = True
 
         # Keep shared config in sync so downstream components see the resolved mode
         self.config.setdefault("evaluation", {})["mode"] = self.eval_mode
@@ -195,9 +197,18 @@ class ReconEvaluator:
 
         # Early warning for non-interactive human mode
         if self.eval_mode == "human" and not sys.stdin.isatty():
+            gt_path = self.eval_config.get("ground_truth", {}).get("object_path")
+            if self._fell_back_from_ground_truth:
+                raise ConfigurationError(
+                    "Ground truth evaluation was requested but no usable ground_truth.object_path was found, "
+                    "and no interactive TTY is available for human evaluation. "
+                    "Provide a valid ground truth file, enable VLM modes, or run interactively."
+                    + (f" Last configured path: {gt_path}" if gt_path else "")
+                )
             raise ConfigurationError(
                 "Human evaluation selected but no interactive TTY detected. "
                 "Provide ground truth or enable VLM modes, or run interactively."
+                + (f" Last configured path: {gt_path}" if gt_path else "")
             )
         # If VLM confirmation is requested but no TTY, disable confirmation to avoid blocking
         if self.eval_mode in ["few_shot", "vision_description"]:
