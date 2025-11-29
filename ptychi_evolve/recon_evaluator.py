@@ -876,18 +876,10 @@ class ReconEvaluator:
             "mae": self._aggregate_layer_values(per_layer["mae"], agg),
             "ssim": self._aggregate_layer_values(per_layer["ssim"], agg),
             "psnr": self._aggregate_layer_values(per_layer["psnr"], agg),
-            "per_layer": per_layer,
             "layer_count": rec_L,
             "aggregation": agg,
-            "evaluation_source": "layers",
+            "per_layer": per_layer,
         }
-        # summary stats for convenience
-        for k, vals in per_layer.items():
-            arr = _np.asarray(vals, dtype=_np.float32)
-            metrics[f"{k}_min"] = float(arr.min())
-            metrics[f"{k}_max"] = float(arr.max())
-            metrics[f"{k}_mean"] = float(arr.mean())
-            metrics[f"{k}_std"] = float(arr.std(ddof=0))
         return metrics
 
     def _calculate_metrics_ground_truth(self, phase_path: str) -> Dict[str, Any]:
@@ -905,6 +897,74 @@ class ReconEvaluator:
             metrics["metrics_error"] = str(e)
 
         return metrics
+
+    def _filter_metrics_by_config(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Trim metrics to align with configured payload (aggregated/per-layer)."""
+        if not isinstance(metrics, dict):
+            return metrics
+
+        analysis_cfg = (self.config.get("analysis", {}) or {})
+        mp_cfg = (analysis_cfg.get("metrics_payload", {}) or {})  # what LLM should see
+        primary_label = analysis_cfg.get(
+            "performance_levels_ground_truth_label", "ssim"
+        )
+
+        # Only trim in ground-truth mode; other modes use structured evals
+        eval_mode = (self.config.get("evaluation", {}) or {}).get(
+            "mode", "ground_truth"
+        )
+        if str(eval_mode).lower() != "ground_truth":
+            return metrics
+
+        filtered = {}
+
+        # Always preserve control/flag fields
+        for key in ("metrics_error", "aborted", "suggested_action", "structured_evaluation"):
+            if key in metrics:
+                filtered[key] = metrics[key]
+
+        # Aggregated metrics: honor configured list, else keep primary + common complements
+        agg_keep = mp_cfg.get("aggregated") or []
+        if agg_keep:
+            for k in agg_keep:
+                if k in metrics:
+                    filtered[k] = metrics[k]
+        else:
+            for k in (primary_label, "rmse", "mae", "psnr"):
+                if k in metrics and k not in filtered:
+                    filtered[k] = metrics[k]
+
+        # Per-layer metrics
+        pl_cfg = (mp_cfg.get("per_layer") or {})
+        pl_enabled = bool(pl_cfg.get("enabled", True))
+        pl_metrics = pl_cfg.get("metrics")
+        if (
+            pl_enabled
+            and "per_layer" in metrics
+            and isinstance(metrics["per_layer"], dict)
+        ):
+            pl_src = metrics["per_layer"]
+            if pl_metrics:
+                filtered["per_layer"] = {
+                    k: v for k, v in pl_src.items() if k in pl_metrics
+                }
+            else:
+                filtered["per_layer"] = pl_src
+
+            # Preserve layer metadata if present
+            for meta in ("layer_count"):
+                if meta in metrics:
+                    filtered[meta] = metrics[meta]
+
+            # Keep convenience stats for selected per-layer metrics when present
+            stat_suffixes = ("_min", "_max", "_mean", "_std")
+            for metric_name in (pl_metrics or []):
+                for suffix in stat_suffixes:
+                    key = f"{metric_name}{suffix}"
+                    if key in metrics:
+                        filtered[key] = metrics[key]
+
+        return filtered or metrics
 
     def _collect_human_evaluation(
         self, image_path: Union[str, Path], final_loss: float = None
@@ -1327,6 +1387,9 @@ class ReconEvaluator:
                 )
             else:
                 raise ValueError(f"Invalid evaluation mode: {self.eval_mode}")
+
+            # Trim metrics to align with configured payload (ground-truth mode)
+            eval_metrics = self._filter_metrics_by_config(eval_metrics)
 
             if self.debug and eval_metrics:
                 self.log.debug_info("[DEBUG] Evaluation metrics:")
