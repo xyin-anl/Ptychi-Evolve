@@ -498,14 +498,15 @@ class ReconEvaluator:
         }
 
         # Validate dk explicitly to avoid propagating strings
-        dk_raw = recon_config.get("dk")
-        dk_value = safe_eval_math(dk_raw)
-        if not isinstance(dk_value, (int, float)):
-            raise ConfigurationError(
-                f"Invalid dk expression '{dk_raw}'. "
-                "dk must be a numeric value or math expression."
-            )
-        params["dk"] = dk_value
+        if "dk" in recon_config:
+            dk_raw = recon_config.get("dk")
+            dk_value = safe_eval_math(dk_raw)
+            if not isinstance(dk_value, (int, float)):
+                raise ConfigurationError(
+                    f"Invalid dk expression '{dk_raw}'. "
+                    "dk must be a numeric value or math expression."
+                )
+            params["dk"] = dk_value
 
         return params
 
