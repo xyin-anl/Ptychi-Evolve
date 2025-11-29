@@ -35,16 +35,16 @@ class LLMEngine:
         self.log = get_logger(__name__, verbose=self.verbose, debug=self.debug)
 
         # Model configuration
-        self.model = self.llm_config.get("model", "gpt-4o-mini")
-        self.reasoning_model = self.llm_config.get("reasoning_model", "o4-mini")
+        self.model = self.llm_config.get("model", "o4-mini")
+        self.reasoning_model = self.llm_config.get("reasoning_model", "o3")
 
         # Reasoning models configuration
-        self.reasoning_effort = self.llm_config.get("reasoning_effort", "medium")
+        self.reasoning_effort = self.llm_config.get("reasoning_effort", "high")
 
         # Web search configuration
         search_config = config.get("search", {})
         self.web_search_enabled = search_config.get("enabled", True)
-        self.search_model = search_config.get("model", "gpt-4.1")
+        self.search_model = search_config.get("model", "o3")
         # Keep backwards compatibility: allow llm.search_context_size but prefer search.context_size
         self.search_context_size = search_config.get(
             "context_size", self.llm_config.get("search_context_size", "medium")

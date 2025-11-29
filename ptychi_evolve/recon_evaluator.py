@@ -97,7 +97,7 @@ class ReconEvaluator:
             },
             # For VLM modes
             'vlm': {
-                'model': 'gpt-4.1'
+                'model': 'o3'
             },
             'human_confirmation': True,  # For VLM modes
             'evaluation_description': 'Evaluate quality...',  # For vision_description mode

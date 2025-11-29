@@ -23,7 +23,7 @@ class VLMEngine:
         self.vlm_config = (
             config.get("evaluation", {}).get("vlm") or config.get("vlm", {}) or {}
         )
-        self.model = self.vlm_config.get("model", "gpt-4.1")
+        self.model = self.vlm_config.get("model", "gpt-5")
         self.verbose = verbose or config.get("verbose", False)
         self.debug = debug or config.get("debug", False)
 
