@@ -538,10 +538,9 @@ class LLMEngine:
         - Always includes aggregated metrics (configured via analysis.metrics_payload.aggregated).
           If omitted, uses <primary label> + one complement (e.g., ssim + rmse).
         - For multislice, per-layer visibility is controlled by analysis.metrics_payload.per_layer.*:
-            mode: all | stats | comprehensive
+            mode: raw | stats | all   # raw = per-layer arrays only; all = raw + stats
             metrics: subset of {ssim, rmse, mae, psnr}
-            stats: any of [min, max, mean, median, std, p10, p90, worst]
-            worst_k: number of worst layers to include (only if 'worst' is selected)
+            stats: any of [min, max, mean, median, std, p10, p90, worst]  # 'worst' adds worst_layer/best_layer
             label_for_worst: 'auto' (=primary label) or one of {ssim, rmse, mae, psnr}
         """
         import numpy as _np
@@ -551,11 +550,19 @@ class LLMEngine:
 
         pl_cfg = (cfg.get("per_layer", {}) or {})
         pl_enabled = bool(pl_cfg.get("enabled", True))
-        pl_mode = str(pl_cfg.get("mode", "stats")).lower()  # all | stats | comprehensive
+        pl_mode_raw = {"raw", "all_raw"}  
+        pl_mode_all = {"all", "comprehensive"} 
+        pl_mode_value = str(pl_cfg.get("mode", "stats")).lower()
+        if pl_mode_value in pl_mode_raw:
+            pl_mode = "raw"
+        elif pl_mode_value in pl_mode_all:
+            pl_mode = "all"
+        else:
+            pl_mode = "stats"
         pl_metrics = pl_cfg.get("metrics")
         pl_stats = [s.lower() for s in (pl_cfg.get("stats") or ["min", "max", "mean", "std"])]
-        worst_k = int(pl_cfg.get("worst_k", 1))
         label_for_worst = str(pl_cfg.get("label_for_worst", "auto")).lower()
+        stats_keys = [s for s in pl_stats if s != "worst"]  # drop 'worst' from numeric stats
 
         is_gt = (self.config.get("evaluation", {}) or {}).get("mode", "ground_truth") == "ground_truth"
         label = (self.config.get("analysis", {}) or {}).get(
@@ -642,14 +649,14 @@ class LLMEngine:
                 continue
             a = _np.asarray(vals, dtype=_np.float32)
 
-            if pl_mode in ("all", "comprehensive"):
+            if pl_mode in ("raw", "all"):
                 per_layer_payload.setdefault("per_layer", {})[k] = vals
 
-            if pl_mode in ("stats", "comprehensive"):
-                per_layer_stats.setdefault("per_layer_stats", {})[k] = stats_for_array(a, pl_stats)
+            if pl_mode in ("stats", "all"):
+                per_layer_stats.setdefault("per_layer_stats", {})[k] = stats_for_array(a, stats_keys)
 
         # 'worst' as part of stats (optional)
-        if include_worst and pl_mode in ("stats", "comprehensive") and worst_metric in per_layer_all:
+        if include_worst and pl_mode in ("stats", "all") and worst_metric in per_layer_all:
             vals = per_layer_all[worst_metric]
             if isinstance(vals, list) and vals:
                 idx_vals = list(enumerate(vals))
@@ -663,20 +670,18 @@ class LLMEngine:
                     hm = higher_is_better  # fallback to global label sense
 
                 idx_vals.sort(key=lambda iv: iv[1], reverse=not hm)  # worst first
-                k = max(1, worst_k)
-                worst_list = [{"layer": i, worst_metric: v} for i, v in idx_vals[:k]]
+                worst_entry = {"layer": idx_vals[0][0], worst_metric: idx_vals[0][1]}
 
                 # best (optional context)
                 best_i, best_v = (max(idx_vals, key=lambda iv: iv[1]) if hm else min(idx_vals, key=lambda iv: iv[1]))
 
-                per_layer_stats.setdefault("per_layer_summary", {})
-                per_layer_stats["per_layer_summary"].update(
+                metric_stats = per_layer_stats.setdefault("per_layer_stats", {}).setdefault(
+                    worst_metric, {}
+                )
+                metric_stats.update(
                     {
-                        "label": worst_metric,
-                        "worst_k": worst_list,
-                        "best": {"layer": best_i, worst_metric: best_v},
-                        "layer_count": metrics.get("layer_count"),
-                        "aggregation": metrics.get("aggregation"),
+                        "worst_layer": worst_entry,
+                        "best_layer": {"layer": best_i, worst_metric: best_v},
                     }
                 )
 
